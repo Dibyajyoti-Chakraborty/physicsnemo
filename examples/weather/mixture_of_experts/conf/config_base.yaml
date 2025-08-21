@@ -17,7 +17,7 @@
 io:
   checkpoint_dir: "./checkpoints"     # Directory where model checkpoints are saved
   model_name: "MoE_base"              # Name of the model (used in logs/checkpoints)
-  load_checkpoint: False              # Whether to resume training from an existing checkpoint (first run False, later True)
+  load_checkpoint: True              # Whether to resume training from an existing checkpoint (first run False, later True)
   log_freq: 100                       # Logging frequency (steps per log update)
   checkpoint_freq: 1                  # Frequency (in epochs) for saving checkpoints
 
@@ -36,8 +36,8 @@ data:
   max_lead_time: 8                     # Maximum forecast horizon in steps
   shuffle_model_idx:                   # Optionally shuffle model indices (empty = disabled)
   shuffle_channel_order:               # Optionally shuffle channel order (empty = disabled)
-  batch_size_train: 8                  # Batch size for training
-  batch_size_validation: 4             # Batch size for validation
+  batch_size_train: 16                  # Batch size for training
+  batch_size_validation: 8             # Batch size for validation
   num_workers_train: 4                 # Data loader workers for training
   num_workers_validation: 2            # Data loader workers for validation
 
@@ -55,8 +55,8 @@ model_params:
   noise_dim:                           # Dimension of noise input (optional, left blank here)
   return_probabilities: True           # Whether to output expert probabilities (for MoE gating)
   bias: True                           # Whether to include bias in MoE gating
-  attention_backbone: "transformer_engine"  # Backend for attention implementation (e.g., transformer_engine)
-  layernorm_backbone: "torch"          # Backend for layer normalization (torch/apex)
+  attention_backbone: "transformer_engine"           # Backend for attention implementation (timm/transformer_engine)
+  layernorm_backbone: "apex"           # Backend for layer normalization (torch/apex)
 
 # WandB configuration
 wandb:

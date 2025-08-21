@@ -51,7 +51,7 @@ def weighted_mse_loss(x, y, t):
     return l2_loss
 
 
-@hydra.main(version_base="1.3", config_path="conf", config_name="config_small")
+@hydra.main(version_base="1.3", config_path="conf", config_name="config_base")
 def main(cfg: DictConfig) -> None:
 
     # Initialize distributed manager
@@ -109,6 +109,11 @@ def main(cfg: DictConfig) -> None:
         bias=cfg.model_params.bias,
     ).to(dist.device)
 
+    if dist.rank == 0:
+        logger.info(
+            f"Trainable Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
+        )
+        
     # # Distributed learning (Data parallel)
     if dist.world_size > 1:
         ddps = torch.cuda.Stream()
@@ -241,10 +246,14 @@ def main(cfg: DictConfig) -> None:
 
                 with autocast(device_type="cuda", dtype=torch.bfloat16):
                     noise = None
-                    probabilities, bias = model(invar, t, noise)
-                    outpred = (
-                        torch.einsum("nmchw,nmchw->nchw", probabilities, invar) + bias
-                    )
+                    if cfg.model_params.bias:
+                        probabilities, bias = model(invar, t, noise)
+                        outpred = (
+                            torch.einsum("nmchw,nmchw->nchw", probabilities, invar) + bias
+                        )
+                    else:
+                        probabilities = model(invar, t, noise)
+                        outpred = torch.einsum("nmchw,nmchw->nchw", probabilities, invar)
                     loss = weighted_mse_loss(outpred, outvar, t)
 
                 scaler.scale(loss).backward()
@@ -294,12 +303,13 @@ def main(cfg: DictConfig) -> None:
                 validation_datapipe,
                 weighted_mse_loss,
                 dist,
+                cfg
             )
             # Log validation metrics
             val_metrics = {
-                "val_loss": mean_val_loss,
-                "aurora_loss": mean_aurora_loss,
-                "pangu_loss": mean_pangu_loss,
+                "Val MSE loss": mean_val_loss,
+                "Aurora loss": mean_aurora_loss,
+                "Pangu loss": mean_pangu_loss,
                 "epoch": epoch,
             }
             launchlog.log_epoch(val_metrics)
@@ -336,7 +346,7 @@ def main(cfg: DictConfig) -> None:
 
 
 @torch.no_grad()
-def validation_step(model, dataset, loss_fn, dist):
+def validation_step(model, dataset, loss_fn, dist, cfg):
     """
     Perform validation on a dataset and return the average loss.
     """
@@ -356,9 +366,12 @@ def validation_step(model, dataset, loss_fn, dist):
 
         with autocast(device_type="cuda", dtype=torch.bfloat16):
             noise = None
-            probabilities, bias = model(invar, t, noise)
-            outpred = torch.einsum("nmchw,nmchw->nchw", probabilities, invar) + bias
-
+            if cfg.model_params.bias:
+                probabilities, bias = model(invar, t, noise)
+                outpred = torch.einsum("nmchw,nmchw->nchw", probabilities, invar) + bias
+            else:
+                probabilities = model(invar, t, noise)
+                outpred = torch.einsum("nmchw,nmchw->nchw", probabilities, invar)
             val_loss = loss_fn(outpred, outvar, t)
             aurora_loss = loss_fn(aurora_pred, outvar, t)
             pangu_loss = loss_fn(pangu_pred, outvar, t)

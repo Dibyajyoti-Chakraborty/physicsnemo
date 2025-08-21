@@ -55,10 +55,6 @@ class MoWE(DiT):
         If 'apex', uses FusedLayerNorm from apex. If 'torch', uses LayerNorm from torch.nn. Defaults to 'apex'.
     noise_dim (int, optional):
         Dimensionality of noise. If None, the model is deterministic. Defaults to None.
-    embedding_type (str, optional):
-        The type of positional embedding ('sin-cos' or 'learnable'). Defaults to 'sin-cos'.
-    pos_embedding_dim (int, optional):
-        The dimensionality of the positional embedding. Defaults to 1.
     return_probabilities (bool, optional):
         If True, the model returns probabilities for each expert and an optional bias term. If False,
         it returns the the output directly. Defaults to True.
@@ -129,19 +125,18 @@ class MoWE(DiT):
         ] = "transformer_engine",
         layernorm_backbone: Literal["apex", "torch"] = "torch",
         noise_dim: Optional[int] = None,
-        pos_embedding_dim: int = 1,
         return_probabilities: bool = True,
         bias: bool = True,
     ):
-        self.n_models = n_models
-        self.in_channels = self.n_models * in_channels
         if out_channels is None:
             out_channels = in_channels
+
+        self.net_in_channels = n_models * in_channels
         if return_probabilities:
             if bias:
-                self.out_channels = (self.n_models + 1) * out_channels
+                self.out_channels = (n_models + 1) * out_channels
             else:
-                self.out_channels = self.n_models * out_channels
+                self.out_channels = n_models * out_channels
         else:
             if bias:
                 raise ValueError("Bias must be False if return_probabilities is False.")
@@ -149,7 +144,7 @@ class MoWE(DiT):
 
         super().__init__(
             input_size=input_size,
-            in_channels=self.in_channels,
+            in_channels=self.net_in_channels,
             patch_size=patch_size,
             out_channels=self.out_channels,
             hidden_size=hidden_size,
@@ -159,11 +154,13 @@ class MoWE(DiT):
             attention_backbone=attention_backbone,
             layernorm_backbone=layernorm_backbone,
             condition_dim=noise_dim,
-            pos_embedding_dim=pos_embedding_dim,
         )
         self.return_probabilities = return_probabilities
         self.bias = bias
         self.noise_dim = noise_dim
+        self.true_out_channels = out_channels
+        self.in_channels = in_channels
+        self.n_models = n_models
 
     def forward(
         self, x: torch.Tensor, t: torch.Tensor, noise: Optional[torch.Tensor] = None
@@ -182,55 +179,30 @@ class MoWE(DiT):
             x = x.reshape(b * n_ens, *x.shape[2:])
             t = t.unsqueeze(1).expand(b, n_ens).reshape(-1) if t is not None else None
             noise = noise.reshape(b * n_ens, self.noise_dim)
-            pos_embed = self.pos_embed.repeat(b * n_ens, 1, 1, 1)
-        else:
-            pos_embed = self.pos_embed.repeat(b, 1, 1, 1)
-
-        # Same as DiT forward
-        x = torch.cat([x, pos_embed], dim=1)
-        x_emb = self.x_embedder(x)
-        x = x_emb.flatten(2).transpose(1, 2)
-        t = self.t_embedder(t)
-        # Handle noise
-        if self.cond_embedder is not None:
-            if noise is None:
-                # Fallback to using only timestep embedding if noise is not provided
-                c = t
-            else:
-                noise_embedding = self.cond_embedder(noise)
-                c = t + noise_embedding
-        else:
-            if noise is not None:
-                raise ValueError("Noise is provided but noise_dim is None.")
-            c = t
-        for block in self.blocks:
-            x = block(x, c)
-        x = self.proj_layer(x, c)
-        x = x.reshape(x.shape[0], x.shape[-1], self.h_patches, self.w_patches)
-        x = self.patch_recovery(x)
+        
+        x  =super().forward(x, t, noise)
 
         # MoWE specific reshaping
         if self.noise_dim:
             x = x.view(b, n_ens, *x.shape[1:])
-
         if self.return_probabilities:
             # Reshape output to separate each expert probablities and apply softmax
             if self.bias:
                 if self.noise_dim:
-                    x = x.view(b, n_ens, n_models + 1, ch, h, w)
+                    x = x.view(b, n_ens, self.n_models + 1, self.true_out_channels, h, w)
                     probabilities = torch.softmax(x[:, :, :-1], dim=2)
                     bias = x[:, :, -1]
                 else:
-                    x = x.view(b, n_models + 1, ch, h, w)
+                    x = x.view(b, self.n_models + 1, self.true_out_channels, h, w)
                     probabilities = torch.softmax(x[:, :-1], dim=1)
                     bias = x[:, -1]
                 return probabilities, bias
             else:
                 if self.noise_dim:
-                    x = x.view(b, n_ens, n_models, ch, h, w)
+                    x = x.view(b, n_ens, self.n_models, self.true_out_channels, h, w)
                     probabilities = torch.softmax(x, dim=2)
                 else:
-                    x = x.view(b, n_models, ch, h, w)
+                    x = x.view(b, self.n_models, self.true_out_channels, h, w)
                     probabilities = torch.softmax(x, dim=1)
                 return probabilities
         return x
