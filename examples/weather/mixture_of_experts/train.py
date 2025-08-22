@@ -53,7 +53,6 @@ def weighted_mse_loss(x, y, t):
 
 @hydra.main(version_base="1.3", config_path="conf", config_name="config_base")
 def main(cfg: DictConfig) -> None:
-
     # Initialize distributed manager
     DistributedManager.initialize()
     dist = DistributedManager()
@@ -68,26 +67,31 @@ def main(cfg: DictConfig) -> None:
     checkpoint_dir = get_checkpoint_dir(
         str(cfg.io.checkpoint_dir), str(cfg.io.model_name)
     )
+    metadata = {"wandb_id": None}
     if cfg.io.load_checkpoint:
-        metadata = {"wandb_id": None}
-        load_checkpoint(checkpoint_dir, metadata_dict=metadata)
-        wandb_id, resume = metadata["wandb_id"], "must"
-        rank_zero_logger.info(f"Resuming wandb run with ID: {wandb_id}")
+        try:
+            load_checkpoint(checkpoint_dir, metadata_dict=metadata)
+            wandb_id, resume = metadata["wandb_id"], "must"
+            rank_zero_logger.info(f"Resuming wandb run with ID: {wandb_id}")
+        except:
+            rank_zero_logger.warning("Checkpoint not found. Starting a new run.")
+            wandb_id, resume = None, "allow"
     else:
         wandb_id, resume = None, "allow"
 
-    initialize_wandb(
-        project=cfg.wandb.project,
-        entity=cfg.wandb.entity if hasattr(cfg.wandb, "entity") else "PhysicsNeMo",
-        name=cfg.wandb.name,
-        group=cfg.wandb.group,
-        mode=cfg.wandb.mode,
-        config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
-        results_dir=cfg.wandb.results_dir,
-        wandb_id=wandb_id,
-        resume=resume,
-        save_code=True,
-    )
+    if dist.rank == 0:
+        initialize_wandb(
+            project=cfg.wandb.project,
+            entity=cfg.wandb.entity if hasattr(cfg.wandb, "entity") else "PhysicsNeMo",
+            name=cfg.wandb.name,
+            group=cfg.wandb.group,
+            mode=cfg.wandb.mode,
+            config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
+            results_dir=cfg.wandb.results_dir,
+            wandb_id=wandb_id,
+            resume=resume,
+            save_code=True,
+        )
     LaunchLogger.initialize(use_mlflow=False)
 
     logger.info(f"Rank: {dist.rank}, Device: {dist.device}")
@@ -113,7 +117,7 @@ def main(cfg: DictConfig) -> None:
         logger.info(
             f"Trainable Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
         )
-        
+
     # # Distributed learning (Data parallel)
     if dist.world_size > 1:
         ddps = torch.cuda.Stream()
@@ -249,11 +253,14 @@ def main(cfg: DictConfig) -> None:
                     if cfg.model_params.bias:
                         probabilities, bias = model(invar, t, noise)
                         outpred = (
-                            torch.einsum("nmchw,nmchw->nchw", probabilities, invar) + bias
+                            torch.einsum("nmchw,nmchw->nchw", probabilities, invar)
+                            + bias
                         )
                     else:
                         probabilities = model(invar, t, noise)
-                        outpred = torch.einsum("nmchw,nmchw->nchw", probabilities, invar)
+                        outpred = torch.einsum(
+                            "nmchw,nmchw->nchw", probabilities, invar
+                        )
                     loss = weighted_mse_loss(outpred, outvar, t)
 
                 scaler.scale(loss).backward()
@@ -299,11 +306,7 @@ def main(cfg: DictConfig) -> None:
         with LaunchLogger("valid", epoch=epoch) as launchlog:
             model.eval()
             mean_val_loss, mean_aurora_loss, mean_pangu_loss = validation_step(
-                model,
-                validation_datapipe,
-                weighted_mse_loss,
-                dist,
-                cfg
+                model, validation_datapipe, weighted_mse_loss, dist, cfg
             )
             # Log validation metrics
             val_metrics = {

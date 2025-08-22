@@ -17,7 +17,7 @@
 io:
   checkpoint_dir: "./checkpoints"     # Directory where model checkpoints are saved
   model_name: "MoE_base_crps"         # Name of the model (used in logs/checkpoints)
-  load_checkpoint: True               # Whether to resume training from an existing checkpoint (First Time False then True)
+  load_checkpoint: True               # Whether to resume training from an existing checkpoint
   log_freq: 100                       # Logging frequency (steps per log update)
   checkpoint_freq: 1                  # Frequency (in epochs) for saving checkpoints
 
@@ -72,7 +72,7 @@ wandb:
 
 training:
   ens_size: 4                         # Ensemble size (number of ensemble members per sample - used in CRPS training)
-  lr: 0.0002                          # Learning rate
+  lr: 0.0003                          # Learning rate
   weight_decay: 0.05                  # Weight decay for optimizer
   max_epochs: 100                     # Number of training epochs
   train_split_ratio: 0.98             # Fraction of data used for training (rest for validation) - 0.98 uses only 2015 data for validation

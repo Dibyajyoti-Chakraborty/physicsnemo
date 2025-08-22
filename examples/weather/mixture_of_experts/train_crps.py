@@ -82,11 +82,15 @@ def main(cfg: DictConfig) -> None:
     checkpoint_dir = get_checkpoint_dir(
         str(cfg.io.checkpoint_dir), str(cfg.io.model_name)
     )
+    metadata = {"wandb_id": None}
     if cfg.io.load_checkpoint:
-        metadata = {"wandb_id": None}
-        load_checkpoint(checkpoint_dir, metadata_dict=metadata)
-        wandb_id, resume = metadata["wandb_id"], "must"
-        rank_zero_logger.info(f"Resuming wandb run with ID: {wandb_id}")
+        try:
+            load_checkpoint(checkpoint_dir, metadata_dict=metadata)
+            wandb_id, resume = metadata["wandb_id"], "must"
+            rank_zero_logger.info(f"Resuming wandb run with ID: {wandb_id}")
+        except:
+            rank_zero_logger.warning("Checkpoint not found. Starting a new run.")
+            wandb_id, resume = None, "allow"
     else:
         wandb_id, resume = None, "allow"
 
@@ -268,10 +272,14 @@ def main(cfg: DictConfig) -> None:
                     int(cfg.model_params.noise_dim),
                 ).to(t.device)
                 with autocast(device_type="cuda", dtype=torch.bfloat16):
-                    probabilities, bias = model(invar, t, noise)
-                    outpred = (
-                        torch.einsum("nemchw,nmchw->nechw", probabilities, invar) + bias
-                    )
+                    if cfg.model_params.return_probabilities:
+                        probabilities, bias = model(invar, t, noise)
+                        outpred = (
+                            torch.einsum("nemchw,nmchw->nechw", probabilities, invar)
+                            + bias
+                        )  # b,n_ens,c,h,w
+                    else:
+                        outpred = model(invar, t, noise)
                     loss = loss_func(outpred, outvar, t)
 
                 scaler.scale(loss).backward()
@@ -382,10 +390,13 @@ def validation_step(model, dataset, loss_fn, dist, cfg):
             batch_size, int(cfg.training.ens_size), int(cfg.model_params.noise_dim)
         ).to(t.device)
         with autocast(device_type="cuda", dtype=torch.bfloat16):
-            probabilities, bias = model(invar, t, noise)
-            outpred = (
-                torch.einsum("nemchw,nmchw->nechw", probabilities, invar) + bias
-            )  # b,n_ens,c,h,w
+            if cfg.model_params.return_probabilities:
+                probabilities, bias = model(invar, t, noise)
+                outpred = (
+                    torch.einsum("nemchw,nmchw->nechw", probabilities, invar) + bias
+                )  # b,n_ens,c,h,w
+            else:
+                outpred = model(invar, t, noise)
             outpred_mean = torch.mean(outpred, dim=1)  # b,c,h,w
             crps_loss = loss_fn(outpred, outvar, t)
             mse_loss = weighted_mse_loss(outpred_mean, outvar, t)

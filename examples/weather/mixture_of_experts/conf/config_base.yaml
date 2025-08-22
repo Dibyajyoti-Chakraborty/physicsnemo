@@ -17,7 +17,7 @@
 io:
   checkpoint_dir: "./checkpoints"     # Directory where model checkpoints are saved
   model_name: "MoE_base"              # Name of the model (used in logs/checkpoints)
-  load_checkpoint: True              # Whether to resume training from an existing checkpoint (first run False, later True)
+  load_checkpoint: True              # Whether to resume training from an existing checkpoint
   log_freq: 100                       # Logging frequency (steps per log update)
   checkpoint_freq: 1                  # Frequency (in epochs) for saving checkpoints
 
@@ -71,5 +71,5 @@ wandb:
 training:
   lr: 0.0002                           # Learning rate
   weight_decay: 0.05                   # Weight decay for optimizer
-  max_epochs: 100                      # Number of training epochs
+  max_epochs: 50                      # Number of training epochs
   train_split_ratio: 0.98              # Fraction of data used for training (rest for validation; 0.98 leaves 2015 for validation)

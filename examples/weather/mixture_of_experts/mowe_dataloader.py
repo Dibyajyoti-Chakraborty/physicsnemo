@@ -204,7 +204,7 @@ class MoWEDatapipe(Datapipe):
                 )
             if not (0 <= self.shuffle_model_idx < self.n_models):
                 raise ValueError(
-                    f"`shuffle_model_idx` must be between 0 and {self.n_models-1}."
+                    f"`shuffle_model_idx` must be between 0 and {self.n_models - 1}."
                 )
 
         if use_cos_zenith:
@@ -371,7 +371,7 @@ class MoWEDatapipe(Datapipe):
 
         with pipe:
             # External source operator reads data
-            source = MoeERA5DaliExternalSource(
+            source = MoWE5DaliExternalSource(
                 data_paths=self.data_paths,
                 year_filenames=self.year_filenames,
                 num_samples=self.total_length,
@@ -477,7 +477,7 @@ class MoWEDatapipe(Datapipe):
         return self.length
 
 
-class MoeERA5DaliExternalSource:
+class MoWE5DaliExternalSource:
     """
     DALI External Source for loading multi-step model forecasts against ERA5 data.
     """
@@ -638,7 +638,7 @@ class MoeERA5DaliExternalSource:
             # Model data is 5D: [initial_condition, lead_time, C, H, W]
             invar_i = self.data_files[i + 1][0]["fields"][
                 model_in_idx,
-                lead_time - 1,
+                lead_time,
                 self.in_chans,
                 :720,
             ]

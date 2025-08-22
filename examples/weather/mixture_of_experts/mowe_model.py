@@ -179,8 +179,8 @@ class MoWE(DiT):
             x = x.reshape(b * n_ens, *x.shape[2:])
             t = t.unsqueeze(1).expand(b, n_ens).reshape(-1) if t is not None else None
             noise = noise.reshape(b * n_ens, self.noise_dim)
-        
-        x  =super().forward(x, t, noise)
+
+        x = super().forward(x, t, noise)
 
         # MoWE specific reshaping
         if self.noise_dim:
@@ -189,7 +189,9 @@ class MoWE(DiT):
             # Reshape output to separate each expert probablities and apply softmax
             if self.bias:
                 if self.noise_dim:
-                    x = x.view(b, n_ens, self.n_models + 1, self.true_out_channels, h, w)
+                    x = x.view(
+                        b, n_ens, self.n_models + 1, self.true_out_channels, h, w
+                    )
                     probabilities = torch.softmax(x[:, :, :-1], dim=2)
                     bias = x[:, :, -1]
                 else:
