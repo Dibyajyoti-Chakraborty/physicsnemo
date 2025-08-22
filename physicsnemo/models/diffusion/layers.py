@@ -1047,12 +1047,20 @@ class PositionalEmbedding(torch.nn.Module):
         max_positions: int = 10000,
         endpoint: bool = False,
         amp_mode: bool = False,
+        learnable: bool = False,
     ):
         super().__init__()
         self.num_channels = num_channels
         self.max_positions = max_positions
         self.endpoint = endpoint
         self.amp_mode = amp_mode
+        self.learnable = learnable
+        if learnable:
+            self.mlp = torch.nn.Sequential(
+                torch.nn.Linear(num_channels, 2 * num_channels, bias=True),
+                torch.nn.SiLU(),
+                torch.nn.Linear(2 * num_channels, num_channels, bias=True),
+            )
 
     def forward(self, x):
         freqs = torch.arange(
@@ -1066,6 +1074,8 @@ class PositionalEmbedding(torch.nn.Module):
                 freqs = freqs.to(x.dtype)
         x = x.ger(freqs)
         x = torch.cat([x.cos(), x.sin()], dim=1)
+        if self.learnable:
+            x = self.mlp(x)
         return x
 
 

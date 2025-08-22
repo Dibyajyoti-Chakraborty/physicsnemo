@@ -76,6 +76,8 @@ class DiT(Module):
         If 'apex', uses FusedLayerNorm from apex. If 'torch', uses LayerNorm from torch.nn. Defaults to 'apex'.
     condition_dim (int, optional):
         Dimensionality of conditioning. If None, the model is unconditional. Defaults to None.
+    dit_initialization (bool, optional):
+        If True, applies the DiT specific initialization. Defaults to True.
 
     Forward
     -------
@@ -125,6 +127,7 @@ class DiT(Module):
         attention_backbone: Literal["timm", "transformer_engine"] = "transformer_engine",
         layernorm_backbone: Literal["apex", "torch"] = "torch",
         condition_dim: Optional[int] = None,
+        dit_initialization: Optional[int] = True,
     ):
         """
         Initializes the DiT model.
@@ -146,7 +149,7 @@ class DiT(Module):
             in_channels,
             hidden_size,
         )
-        self.t_embedder = PositionalEmbedding(hidden_size, amp_mode=self.meta.amp_gpu)
+        self.t_embedder = PositionalEmbedding(hidden_size, amp_mode=self.meta.amp_gpu, learnable=True)
         init_zero = dict(init_mode="kaiming_uniform", init_weight=0, init_bias=0)
         self.cond_embedder = (
             Linear(
@@ -183,7 +186,8 @@ class DiT(Module):
             self.patch_size[0] * self.patch_size[1] * self.out_channels,
             layernorm_backbone,
         )
-        self.initialize_weights()
+        if dit_initialization:
+            self.initialize_weights()
 
 
     def initialize_weights(self):
