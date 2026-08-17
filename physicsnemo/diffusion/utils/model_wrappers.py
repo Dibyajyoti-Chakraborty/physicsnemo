@@ -87,7 +87,7 @@ class ConcatConditionWrapper(Module):
         time embedding, by default ``1.0``. Sinusoidal/positional timestep
         embedders (DDPM++/DiT-style) are designed for inputs spanning
         roughly ``[0, 1000]``; when training flow-matching models whose time
-        variable lives in ``[0, 1]``, set this accordingly so the embedding 
+        variable lives in ``[0, 1]``, set this accordingly so the embedding
         operates in its designed dynamic range. Applied identically at training
         and sampling time since it is part of the wrapped module.
 

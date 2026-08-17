@@ -455,5 +455,3 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
             return velocity_fn(x, t) - (t_bc / (1 - t_bc)) * score_fn(x, t)
 
         return sde_denoiser
-
-

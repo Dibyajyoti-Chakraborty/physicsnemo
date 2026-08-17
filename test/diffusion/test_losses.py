@@ -702,9 +702,7 @@ class TestFlowMatchingLossConstructor:
     def test_invalid_prediction_type(self):
         model = instantiate_model_deterministic(FlatLinearX0Predictor, features=48)
         with pytest.raises(ValueError, match="prediction_type"):
-            FlowMatchingLoss(
-                model, FlowMatchingNoiseScheduler(), prediction_type="bad"
-            )
+            FlowMatchingLoss(model, FlowMatchingNoiseScheduler(), prediction_type="bad")
 
     def test_invalid_reduction(self):
         model = instantiate_model_deterministic(FlatLinearX0Predictor, features=48)

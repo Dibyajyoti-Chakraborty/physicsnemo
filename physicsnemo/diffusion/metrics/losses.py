@@ -646,10 +646,9 @@ class WeightedMSEDSMLoss:
         return self._reduce(loss)
 
 
-
 class FlowMatchingLoss:
     r"""
-    Flow matching loss for training continuous normalizing flows or 
+    Flow matching loss for training continuous normalizing flows or
     diffusion models with a velocity objective.
 
     Implements the conditional flow matching objective. Given clean data
@@ -953,4 +952,3 @@ class FlowMatchingLoss:
         w = _maybe_promote_to_mesh(w, loss)
         loss = w * loss
         return self._reduce(loss)
-
