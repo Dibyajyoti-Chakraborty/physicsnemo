@@ -21,7 +21,6 @@ import torch
 
 from physicsnemo.diffusion.noise_schedulers import (
     EDMNoiseScheduler,
-    FlowMatchingNoiseScheduler,
     IDDPMNoiseScheduler,
     LinearGaussianNoiseScheduler,
     NoiseScheduler,
