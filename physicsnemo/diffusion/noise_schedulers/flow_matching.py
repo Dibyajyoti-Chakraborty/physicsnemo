@@ -343,6 +343,9 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
             ``epsilon_predictor``, or ``velocity_predictor`` is provided.
         ValueError
             If ``denoising_type`` is not ``"ode"`` or ``"sde"``.
+        ValueError
+            If ``denoising_type="sde"`` and this scheduler's ``t_max >= 1``,
+            since the SDE drift is singular at :math:`t = 1`.
 
         Examples
         --------
@@ -375,6 +378,13 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
         if denoising_type not in ("ode", "sde"):
             raise ValueError(
                 f"denoising_type must be 'ode' or 'sde', got '{denoising_type}'"
+            )
+        if denoising_type == "sde" and self.t_max >= 1.0:
+            raise ValueError(
+                "denoising_type='sde' is singular at t=1 for the flow matching "
+                f"path (division by 1 - t), but this scheduler has t_max="
+                f"{self.t_max} >= 1. Construct FlowMatchingNoiseScheduler with "
+                "t_max < 1 (e.g. t_max=0.999) to use SDE sampling."
             )
 
         def _bc(t: Tensor, ndim: int) -> Tensor:

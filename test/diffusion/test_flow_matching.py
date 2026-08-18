@@ -201,6 +201,20 @@ class TestFlowMatchingGetDenoiser:
         with pytest.raises(ValueError, match="denoising_type"):
             s.get_denoiser(velocity_predictor=pred, denoising_type="bad")
 
+    def test_sde_rejects_default_t_max(self, device):
+        """SDE sampling is singular at t=1, so it must be rejected when
+        t_max=1 (the default) instead of silently producing inf/nan."""
+        s = FlowMatchingNoiseScheduler()
+        pred = lambda x, t: x  # noqa: E731
+        with pytest.raises(ValueError, match="t_max"):
+            s.get_denoiser(velocity_predictor=pred, denoising_type="sde")
+
+    def test_sde_accepts_t_max_below_one(self, device):
+        s = FlowMatchingNoiseScheduler(t_max=0.999)
+        pred = lambda x, t: x  # noqa: E731
+        # Should not raise.
+        s.get_denoiser(velocity_predictor=pred, denoising_type="sde")
+
     def test_velocity_predictor_ode_rhs_is_the_prediction(self, device):
         """For a velocity_predictor, the ODE RHS is the velocity itself."""
         s = FlowMatchingNoiseScheduler()
