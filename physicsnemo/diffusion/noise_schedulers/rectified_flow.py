@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Flow matching (rectified flow) noise scheduler."""
+"""Rectified flow noise scheduler."""
 
 from typing import Any, Literal
 
@@ -27,10 +27,9 @@ from physicsnemo.diffusion.base import Denoiser, Predictor
 from .linear_gaussian import LinearGaussianNoiseScheduler
 
 
-class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
+class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
     r"""
-    Flow matching (rectified flow / conditional optimal transport) noise
-    scheduler.
+    Rectified flow (optimal transport) noise scheduler.
 
     Implements the linear interpolation path used in flow matching, with
     :math:`\alpha(t) = 1 - t` and :math:`\sigma(t) = t` for
@@ -41,14 +40,16 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
         \quad \boldsymbol{\epsilon} \sim \mathcal{N}(0, \mathbf{I})
 
     At :math:`t = 0` the state is clean data, and at :math:`t = 1` it is pure
-    Gaussian noise. The conditional velocity field associated with this path is
+    Gaussian noise. The flow (velocity) field associated with this path is
 
     .. math::
         \mathbf{v} = \frac{d\mathbf{x}(t)}{dt}
         = \boldsymbol{\epsilon} - \mathbf{x}_0
 
     which is the regression target of the flow matching training objective
-    (see :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`).
+    (``prediction_type="flow"`` in
+    :class:`~physicsnemo.diffusion.base.PredictorType`; see
+    :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`).
 
     **Sampling time-steps** are linearly spaced from ``t_max`` down to 0.
 
@@ -63,14 +64,27 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
     .. note::
 
         :meth:`get_denoiser` is overridden with closed-form expressions for
-        the probability-flow ODE right-hand side (the velocity field), which
+        the probability-flow ODE right-hand side (the flow field), which
         avoids the :math:`\dot{\alpha}(t)/\alpha(t)` singularity of the
         generic formulation at :math:`t = 1`. Sampling can therefore start
         exactly at :math:`t = 1` (pure noise) with ``x0_predictor`` or
-        ``velocity_predictor``. For ``epsilon_predictor``,
+        ``flow_predictor``. For ``epsilon_predictor``,
         ``score_predictor``, or ``denoising_type="sde"``, the reverse process
         is inherently singular at :math:`t = 1` and ``t_max`` must be set
         strictly below 1 (e.g. ``t_max=0.999``).
+
+    .. warning::
+
+        ``timesteps``/``sample_time``/``add_noise`` may
+        cast ``t_min``/``t_max``  into the tensor ``dtype`` requested at call time
+        A margin that is safe in that validation can vanish under low-precision
+        rounding: ``0.999`` rounds to exactly ``1.0`` in ``bfloat16``
+        (its representable spacing near 1 is :math:`2^{-7} \approx
+        0.0078`), silently reproducing the :math:`t = 1` singularity this
+        was meant to avoid. ``0.99`` is safe in ``bfloat16``
+        (rounds to ``0.98828125``). If sampling or training in
+        ``bfloat16``/``float16``, choose ``t_max`` with enough margin for
+        the dtype used.
 
     Parameters
     ----------
@@ -78,7 +92,7 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
         Minimum diffusion time used when sampling training times, by
         default 0.0. Must satisfy ``0 <= t_min < t_max``. Set slightly
         above 0 (e.g. ``1e-3``) when training an x0-predictor, since the
-        x0-to-velocity conversion is singular at :math:`t = 0`.
+        x0-to-flow conversion is singular at :math:`t = 0`.
     t_max : float, optional
         Maximum diffusion time, by default 1.0. Used as the initial time for
         sampling time-steps and as the upper bound for training times. Must
@@ -98,10 +112,10 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
 
     >>> import torch
     >>> from physicsnemo.diffusion.noise_schedulers import (
-    ...     FlowMatchingNoiseScheduler,
+    ...     RectifiedFlowNoiseScheduler,
     ... )
     >>>
-    >>> scheduler = FlowMatchingNoiseScheduler()
+    >>> scheduler = RectifiedFlowNoiseScheduler()
     >>>
     >>> # Training: sample times and interpolate towards noise
     >>> x0 = torch.randn(4, 3, 8, 8)  # Clean data
@@ -117,9 +131,9 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
     >>> xN.shape
     torch.Size([4, 3, 8, 8])
     >>>
-    >>> # Convert velocity-predictor to denoiser for sampling
-    >>> velocity_predictor = lambda x, t: -x  # Toy velocity-predictor
-    >>> denoiser = scheduler.get_denoiser(velocity_predictor=velocity_predictor)
+    >>> # Convert flow-predictor to denoiser for sampling
+    >>> flow_predictor = lambda x, t: -x  # Toy flow-predictor
+    >>> denoiser = scheduler.get_denoiser(flow_predictor=flow_predictor)
     >>> denoiser(xN, tN).shape  # ODE RHS for sampling
     torch.Size([4, 3, 8, 8])
     >>>
@@ -262,25 +276,25 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
         score_predictor: Predictor | None = None,
         x0_predictor: Predictor | None = None,
         epsilon_predictor: Predictor | None = None,
-        velocity_predictor: Predictor | None = None,
+        flow_predictor: Predictor | None = None,
         denoising_type: Literal["ode", "sde"] = "ode",
         **kwargs: Any,
     ) -> Denoiser:
         r"""
         Factory that converts a predictor to a denoiser for sampling.
 
-        Accepts exactly one of **velocity-predictor**, **x0-predictor**,
+        Accepts exactly one of **flow-predictor**, **x0-predictor**,
         **epsilon-predictor**, or **score-predictor**. The returned denoiser
         computes the right-hand side of the reverse ODE or SDE using
         closed-form expressions for the flow matching path.
 
         For the ODE (``denoising_type="ode"``), the right-hand side is the
-        velocity field :math:`\mathbf{v}(\mathbf{x}, t)`:
+        flow field :math:`\mathbf{v}(\mathbf{x}, t)`:
 
         .. math::
             \frac{d\mathbf{x}}{dt} = \mathbf{v}(\mathbf{x}, t) =
             \begin{cases}
-                \hat{\mathbf{v}} & \text{(velocity)} \\
+                \hat{\mathbf{v}} & \text{(flow)} \\
                 (\mathbf{x} - \hat{\mathbf{x}}_0) / t & \text{(x0)} \\
                 (\hat{\boldsymbol{\epsilon}} - \mathbf{x}) / (1 - t)
                 & \text{(epsilon)} \\
@@ -299,7 +313,7 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
 
         .. warning::
 
-            The velocity and x0 parameterizations are regular at
+            The flow and x0 parameterizations are regular at
             :math:`t = 1`, so ODE sampling can start from pure noise
             (``t_max=1``, the default). The epsilon and score
             parameterizations, as well as ``denoising_type="sde"``, are
@@ -318,10 +332,10 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
             An epsilon-predictor that takes ``(x_t, t)`` and returns an
             estimate of the noise :math:`\hat{\boldsymbol{\epsilon}}`.
             Mutually exclusive with the other predictor arguments.
-        velocity_predictor : Predictor, optional
-            A velocity-predictor that takes ``(x_t, t)`` and returns an
-            estimate of the velocity :math:`\hat{\mathbf{v}}` (e.g. a model
-            trained with
+        flow_predictor : Predictor, optional
+            A flow-predictor that takes ``(x_t, t)`` and returns an
+            estimate of the flow (velocity) :math:`\hat{\mathbf{v}}` (e.g. a
+            model trained with
             :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`).
             Mutually exclusive with the other predictor arguments.
         denoising_type : {"ode", "sde"}, default="ode"
@@ -340,7 +354,7 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
         ------
         ValueError
             If not exactly one of ``score_predictor``, ``x0_predictor``,
-            ``epsilon_predictor``, or ``velocity_predictor`` is provided.
+            ``epsilon_predictor``, or ``flow_predictor`` is provided.
         ValueError
             If ``denoising_type`` is not ``"ode"`` or ``"sde"``.
         ValueError
@@ -349,12 +363,12 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
 
         Examples
         --------
-        Generate ODE RHS from a velocity-predictor:
+        Generate ODE RHS from a flow-predictor:
 
         >>> import torch
-        >>> scheduler = FlowMatchingNoiseScheduler()
-        >>> velocity_pred = lambda x, t: -x  # Toy velocity-predictor
-        >>> denoiser = scheduler.get_denoiser(velocity_predictor=velocity_pred)
+        >>> scheduler = RectifiedFlowNoiseScheduler()
+        >>> flow_pred = lambda x, t: -x  # Toy flow-predictor
+        >>> denoiser = scheduler.get_denoiser(flow_predictor=flow_pred)
         >>> x = torch.randn(2, 3, 8, 8)
         >>> t = torch.ones(2)
         >>> dx_dt = denoiser(x, t)  # Returns ODE RHS for sampling
@@ -367,13 +381,13 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
                 score_predictor,
                 x0_predictor,
                 epsilon_predictor,
-                velocity_predictor,
+                flow_predictor,
             )
         )
         if provided != 1:
             raise ValueError(
                 "Exactly one of 'score_predictor', 'x0_predictor', "
-                "'epsilon_predictor', or 'velocity_predictor' must be provided."
+                "'epsilon_predictor', or 'flow_predictor' must be provided."
             )
         if denoising_type not in ("ode", "sde"):
             raise ValueError(
@@ -383,19 +397,19 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
             raise ValueError(
                 "denoising_type='sde' is singular at t=1 for the flow matching "
                 f"path (division by 1 - t), but this scheduler has t_max="
-                f"{self.t_max} >= 1. Construct FlowMatchingNoiseScheduler with "
-                "t_max < 1 (e.g. t_max=0.999) to use SDE sampling."
+                f"{self.t_max} >= 1. Construct RectifiedFlowNoiseScheduler "
+                "with t_max < 1 (e.g. t_max=0.999) to use SDE sampling."
             )
 
         def _bc(t: Tensor, ndim: int) -> Tensor:
             return t.reshape((-1,) + (1,) * (ndim - 1))
 
-        # Closed-form velocity field (probability-flow ODE RHS)
-        if velocity_predictor is not None:
-            velocity_fn = velocity_predictor
+        # Closed-form flow field (probability-flow ODE RHS)
+        if flow_predictor is not None:
+            flow_fn = flow_predictor
         elif x0_predictor is not None:
 
-            def velocity_fn(
+            def flow_fn(
                 x: Float[Tensor, " B *dims"],
                 t: Float[Tensor, " B"],
             ) -> Float[Tensor, " B *dims"]:
@@ -404,7 +418,7 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
 
         elif epsilon_predictor is not None:
 
-            def velocity_fn(
+            def flow_fn(
                 x: Float[Tensor, " B *dims"],
                 t: Float[Tensor, " B"],
             ) -> Float[Tensor, " B *dims"]:
@@ -413,7 +427,7 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
 
         else:
 
-            def velocity_fn(
+            def flow_fn(
                 x: Float[Tensor, " B *dims"],
                 t: Float[Tensor, " B"],
             ) -> Float[Tensor, " B *dims"]:
@@ -422,9 +436,9 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
                 return -(x + t_bc * score) / (1 - t_bc)
 
         if denoising_type == "ode":
-            return velocity_fn
+            return flow_fn
 
-        # SDE: deterministic drift = velocity - (1/2) g^2 * score, with
+        # SDE: deterministic drift = flow - (1/2) g^2 * score, with
         # g^2 = 2t / (1 - t) for the flow matching path.
         if score_predictor is not None:
             score_fn = score_predictor
@@ -447,14 +461,14 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
                 return epsilon_to_score(epsilon_predictor(x, t), t)
 
         else:
-            velocity_to_x0 = self.velocity_to_x0
+            flow_to_x0 = self.flow_to_x0
             x0_to_score_v = self.x0_to_score
 
             def score_fn(
                 x: Float[Tensor, " B *dims"],
                 t: Float[Tensor, " B"],
             ) -> Float[Tensor, " B *dims"]:
-                x0 = velocity_to_x0(velocity_predictor(x, t), x, t)
+                x0 = flow_to_x0(flow_predictor(x, t), x, t)
                 return x0_to_score_v(x0, x, t)
 
         def sde_denoiser(
@@ -462,6 +476,6 @@ class FlowMatchingNoiseScheduler(LinearGaussianNoiseScheduler):
             t: Float[Tensor, " B"],
         ) -> Float[Tensor, " B *dims"]:
             t_bc = _bc(t, x.ndim)
-            return velocity_fn(x, t) - (t_bc / (1 - t_bc)) * score_fn(x, t)
+            return flow_fn(x, t) - (t_bc / (1 - t_bc)) * score_fn(x, t)
 
         return sde_denoiser

@@ -272,26 +272,26 @@ class TestLinearGaussianNoiseScheduler:
         x0_back = s.score_to_x0(score, x_t, t)
         assert torch.allclose(x0, x0_back, atol=1e-5)
 
-    def test_concrete_x0_to_velocity_to_x0(self, device):
+    def test_concrete_x0_to_flow_to_x0(self, device):
         s = _MinimalScheduler()
         x0 = make_input((2, 4), seed=15, device=device)
         x_t = make_input((2, 4), seed=16, device=device)
         t = torch.tensor([0.5, 0.5], device=device)
-        v = s.x0_to_velocity(x0, x_t, t)
-        x0_back = s.velocity_to_x0(v, x_t, t)
+        v = s.x0_to_flow(x0, x_t, t)
+        x0_back = s.flow_to_x0(v, x_t, t)
         assert torch.allclose(x0, x0_back, atol=1e-5)
 
-    def test_concrete_velocity_to_x0_to_velocity(self, device):
+    def test_concrete_flow_to_x0_to_flow(self, device):
         s = _MinimalScheduler()
         v = make_input((2, 4), seed=17, device=device)
         x_t = make_input((2, 4), seed=18, device=device)
         t = torch.tensor([0.5, 0.5], device=device)
-        x0 = s.velocity_to_x0(v, x_t, t)
-        v_back = s.x0_to_velocity(x0, x_t, t)
+        x0 = s.flow_to_x0(v, x_t, t)
+        v_back = s.x0_to_flow(x0, x_t, t)
         assert torch.allclose(v, v_back, atol=1e-5)
 
-    def test_get_denoiser_with_velocity_predictor(self, device):
-        """velocity_predictor produces the same RHS as an equivalent x0_predictor."""
+    def test_get_denoiser_with_flow_predictor(self, device):
+        """flow_predictor produces the same RHS as an equivalent x0_predictor."""
         s = _MinimalScheduler()
         x = make_input((2, 4), seed=19, device=device)
         t = torch.tensor([0.5, 0.5], device=device)
@@ -299,19 +299,19 @@ class TestLinearGaussianNoiseScheduler:
         def x0_pred(x, t):
             return x * 0.9
 
-        def velocity_pred(x, t):
+        def flow_pred(x, t):
             x0 = x0_pred(x, t)
-            return s.x0_to_velocity(x0, x, t)
+            return s.x0_to_flow(x0, x, t)
 
         denoiser_x0 = s.get_denoiser(x0_predictor=x0_pred)
-        denoiser_v = s.get_denoiser(velocity_predictor=velocity_pred)
+        denoiser_v = s.get_denoiser(flow_predictor=flow_pred)
         torch.testing.assert_close(denoiser_x0(x, t), denoiser_v(x, t))
 
-    def test_get_denoiser_validates_velocity_predictor(self, device):
+    def test_get_denoiser_validates_flow_predictor(self, device):
         s = _MinimalScheduler()
         pred = lambda x, t: x  # noqa: E731
         with pytest.raises(ValueError, match="Exactly one"):
-            s.get_denoiser(x0_predictor=pred, velocity_predictor=pred)
+            s.get_denoiser(x0_predictor=pred, flow_predictor=pred)
 
     def test_custom_drift_override(self, device):
         """Overriding drift() changes get_denoiser behavior."""

@@ -253,13 +253,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current particle population, an optional background mesh, and the simulation
   time. Independent rollouts form an ensemble for uncertainty quantification.
 - Adds rectified flow matching to the diffusion framework:
-  `physicsnemo.diffusion.noise_schedulers.FlowMatchingNoiseScheduler` and `physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`
-  (velocity objective, also usable with `"x0"`/`"epsilon"`/`"score"`
-  prediction types on any `LinearGaussianNoiseScheduler`). `get_denoiser` and
-  `LinearGaussianNoiseScheduler` gain `velocity_predictor` support and
-  `x0_to_velocity` / `velocity_to_x0` conversions. `ConcatConditionWrapper`
-  gains a `time_scale` argument for rescaling `t` into a backbone's expected
-  embedding range.
+  `physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler` (the
+  linear path, with a closed-form `get_denoiser` RHS) and
+  `physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` (flow/velocity
+  objective, also usable with `"x0"`/`"epsilon"`/`"score"` prediction types
+  on any `LinearGaussianNoiseScheduler`). `PredictorType` gains a `"flow"`
+  member for this quantity, named to avoid confusion with the different
+  Salimans-Ho "v-prediction" target.
+  `physicsnemo.diffusion.metrics.losses.WeightedFlowMatchingLoss` extends it
+  with an element-wise weight (e.g. a binary mask), matching
+  `WeightedMSEDSMLoss`. `get_denoiser` and `LinearGaussianNoiseScheduler`
+  gain `flow_predictor` support and `x0_to_flow` / `flow_to_x0`
+  conversions. `ConcatConditionWrapper` gains a `time_scale` argument for
+  rescaling `t` into a backbone's expected embedding range (e.g. `999.0`
+  for `[0, 1]`-valued flow-matching times).
 
 ### Changed
 

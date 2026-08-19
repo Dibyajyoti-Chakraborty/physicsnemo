@@ -49,4 +49,9 @@ from .legacy_losses import (
     VELoss_dfsr,
     VPLoss,
 )
-from .losses import FlowMatchingLoss, MSEDSMLoss, WeightedMSEDSMLoss
+from .losses import (
+    FlowMatchingLoss,
+    MSEDSMLoss,
+    WeightedFlowMatchingLoss,
+    WeightedMSEDSMLoss,
+)
