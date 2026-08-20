@@ -56,6 +56,25 @@ graphs).
     )
 
 
+.. _diffusion_metrics_reductions:
+
+Reductions and Irregular Data
+------------------------------
+
+``reduction`` on every loss above reduces over *all* elements
+(``"mean"``/``"sum"``), matching ``torch.nn`` loss conventions. For data
+that isn't a dense grid — padded batches, variable-size point clouds or
+graphs — use ``reduction="none"`` to get the unreduced per-element loss and
+apply your own reduction (masked mean, ``torch_scatter.scatter_mean`` keyed
+by a graph/batch index, etc.):
+
+.. code-block:: python
+
+    loss_fn = MSEDSMLoss(model, scheduler, reduction="none")
+    loss = loss_fn(x0)                      # per-element, same shape as x0
+    masked_loss = (loss * mask).sum() / mask.sum()
+
+
 Evaluation Metrics
 ------------------
 

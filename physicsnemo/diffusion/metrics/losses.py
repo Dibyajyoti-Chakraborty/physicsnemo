@@ -199,7 +199,9 @@ class MSEDSMLoss:
     reduction : Literal["none", "mean", "sum"], default="mean"
         Reduction to apply to the output: ``"none"`` returns the
         per-element loss, ``"mean"`` returns the mean over all elements,
-        ``"sum"`` returns the sum over all elements.
+        ``"sum"`` returns the sum over all elements. See
+        :ref:`diffusion_metrics_reductions` for irregular/graph-structured
+        data.
 
     Raises
     ------
@@ -502,7 +504,9 @@ class WeightedMSEDSMLoss:
         ``prediction_type="epsilon"``.
     reduction : {"none", "mean", "sum"}, default="mean"
         Reduction to apply to the output: ``"none"`` returns the
-        per-element loss, ``"mean"`` the mean, ``"sum"`` the sum.
+        per-element loss, ``"mean"`` the mean, ``"sum"`` the sum. See
+        :ref:`diffusion_metrics_reductions` for irregular/graph-structured
+        data.
 
     Examples
     --------
@@ -761,7 +765,9 @@ class FlowMatchingLoss:
     reduction : Literal["none", "mean", "sum"], default="mean"
         Reduction to apply to the output: ``"none"`` returns the
         per-element loss, ``"mean"`` returns the mean over all elements,
-        ``"sum"`` returns the sum over all elements.
+        ``"sum"`` returns the sum over all elements. See
+        :ref:`diffusion_metrics_reductions` for irregular/graph-structured
+        data.
 
     Raises
     ------
@@ -1012,7 +1018,9 @@ class WeightedFlowMatchingLoss:
     reduction : Literal["none", "mean", "sum"], default="mean"
         Reduction to apply to the output: ``"none"`` returns the
         per-element loss, ``"mean"`` returns the mean over all elements,
-        ``"sum"`` returns the sum over all elements.
+        ``"sum"`` returns the sum over all elements. See
+        :ref:`diffusion_metrics_reductions` for irregular/graph-structured
+        data.
 
     Raises
     ------
