@@ -82,12 +82,6 @@ class ConcatConditionWrapper(Module):
     vector_cond_key : str, optional
         TensorDict key for the vector conditioning tensor to pass through to
         the backbone, by default ``"cond_vec"``.
-    time_scale : float, optional
-        Multiplier applied to ``t`` before the backbone's time embedding
-        receives it, by default ``1.0``. Set to e.g. ``999.0`` for flow
-        matching, whose ``[0, 1]``-valued times under-drive DDPM++/DiT-style
-        embedders built for ``[0, 1000]``. Part of the wrapped module, so it
-        applies identically at training and sampling time.
 
     Forward
     -------
@@ -148,13 +142,11 @@ class ConcatConditionWrapper(Module):
         model: Module,
         image_cond_key: str = "cond_concat",
         vector_cond_key: str = "cond_vec",
-        time_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.model = model
         self.image_cond_key = image_cond_key
         self.vector_cond_key = vector_cond_key
-        self.time_scale = time_scale
 
     def forward(
         self,
@@ -253,9 +245,6 @@ class ConcatConditionWrapper(Module):
 
         if cond_concat is not None:
             x = torch.cat([x, cond_concat], dim=1)
-
-        if self.time_scale != 1.0:
-            t = self.time_scale * t
 
         if isinstance(
             self.model, (SongUNet, SongUNetPosEmbd, SongUNetPosLtEmbd, DhariwalUNet)

@@ -688,12 +688,12 @@ class FlowMatchingLoss:
 
     .. note::
 
-        If the backbone's time embedding expects ``[0, 1000]``-range inputs
-        (DDPM++/DiT-style), set ``time_scale`` (e.g. ``999.0``) on
-        :class:`~physicsnemo.diffusion.utils.model_wrappers.ConcatConditionWrapper`
-        and reuse the *same* wrapped model for training and sampling — a
-        mismatched ``time_scale`` silently shifts the embedding out of its
-        trained range.
+        Flow matching times live in ``[0, 1]``, while DDPM++/DiT-style
+        timestep embedders expect inputs spanning roughly ``[0, 1000]``.
+        Scale ``t`` inside your model (e.g. multiply by ``999.0`` before
+        the time embedding), identically at training and sampling time — a
+        mismatched scale silently shifts the embedding out of its trained
+        range.
 
     Parameters
     ----------
@@ -930,7 +930,7 @@ class WeightedFlowMatchingLoss:
     variable-size point clouds or graphs). Note that ``weight`` differs
     from the time-dependent loss weight :math:`w(t)` of the noise
     scheduler. See :class:`FlowMatchingLoss` for prediction types,
-    signatures, singularities, and the ``time_scale`` caveat.
+    signatures, singularities, and the time-scaling caveat.
 
     .. warning::
 

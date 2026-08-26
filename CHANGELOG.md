@@ -265,9 +265,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with an element-wise weight such as a binary mask. `PredictorType` gains a
   `"flow"` member. `get_denoiser` and `LinearGaussianNoiseScheduler` gain
   `flow_predictor` support and the `x0_to_flow` / `flow_to_x0` and
-  `score_to_flow` / `flow_to_score` conversions. `ConcatConditionWrapper`
-  gains a `time_scale` argument for rescaling `t` into a backbone's
-  expected embedding range.
+  `score_to_flow` / `flow_to_score` conversions.
 
 ### Changed
 
