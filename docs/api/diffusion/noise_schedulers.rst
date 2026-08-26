@@ -112,7 +112,7 @@ available at three levels:
   - :class:`StudentTEDMNoiseScheduler` --- EDM variant with Student-t noise
     for heavy-tailed data.
   - :class:`RectifiedFlowNoiseScheduler` --- Linear / optimal transport
-    schedule, for training with a flow (velocity) objective.
+    schedule, for flow matching training.
 
 
 API Reference

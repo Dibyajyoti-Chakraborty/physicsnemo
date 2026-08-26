@@ -16,20 +16,18 @@
 
 """Rectified flow noise scheduler."""
 
-from typing import Any, Literal
+import warnings
 
 import torch
 from jaxtyping import Float
 from torch import Tensor
-
-from physicsnemo.diffusion.base import Denoiser, Predictor
 
 from .linear_gaussian import LinearGaussianNoiseScheduler
 
 
 class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
     r"""
-    Rectified flow (optimal transport) noise scheduler.
+    Rectified flow noise scheduler.
 
     Implements the linear interpolation path used in flow matching, with
     :math:`\alpha(t) = 1 - t` and :math:`\sigma(t) = t` for
@@ -39,64 +37,40 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
         \mathbf{x}(t) = (1 - t)\, \mathbf{x}_0 + t\, \boldsymbol{\epsilon},
         \quad \boldsymbol{\epsilon} \sim \mathcal{N}(0, \mathbf{I})
 
-    At :math:`t = 0` the state is clean data, and at :math:`t = 1` it is pure
-    Gaussian noise. The flow (velocity) field associated with this path is
+    At :math:`t = 0` the state is clean data, and at :math:`t = 1` pure
+    Gaussian noise. The flow (velocity) field of this path,
 
     .. math::
         \mathbf{v} = \frac{d\mathbf{x}(t)}{dt}
-        = \boldsymbol{\epsilon} - \mathbf{x}_0
+        = \boldsymbol{\epsilon} - \mathbf{x}_0,
 
-    which is the regression target of the flow matching training objective
-    (``prediction_type="flow"`` in
-    :class:`~physicsnemo.diffusion.base.PredictorType`; see
-    :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`).
-
-    **Sampling time-steps** are linearly spaced from ``t_max`` down to 0.
-
-    **Training times** are sampled uniformly in :math:`[t_{\min}, t_{\max}]`.
-
-    Since this path is linear-Gaussian, this scheduler is fully interoperable
-    with the rest of the diffusion framework (losses, samplers, solvers,
-    domain-parallel wrapper). In particular a model trained with denoising
-    score matching on this schedule and a model trained with flow matching
-    parameterize the same probability-flow ODE.
-
-    .. note::
-
-        :meth:`get_denoiser` is overridden with closed-form expressions for
-        the probability-flow ODE right-hand side (the flow field), which
-        avoids the :math:`\dot{\alpha}(t)/\alpha(t)` singularity of the
-        generic formulation at :math:`t = 1`. Sampling can therefore start
-        exactly at :math:`t = 1` (pure noise) with ``x0_predictor`` or
-        ``flow_predictor``. For ``epsilon_predictor``,
-        ``score_predictor``, or ``denoising_type="sde"``, the reverse process
-        is inherently singular at :math:`t = 1` and ``t_max`` must be set
-        strictly below 1 (e.g. ``t_max=0.999``).
+    is the regression target of
+    :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`
+    (``prediction_type="flow"``). Sampling time-steps run linearly from
+    ``t_max`` down to 0; training times follow a uniform distribution on
+    :math:`[t_{\min}, t_{\max}]`.
 
     .. warning::
 
-        ``timesteps``/``sample_time``/``add_noise`` may
-        cast ``t_min``/``t_max``  into the tensor ``dtype`` requested at call time
-        A margin that is safe in that validation can vanish under low-precision
-        rounding: ``0.999`` rounds to exactly ``1.0`` in ``bfloat16``
-        (its representable spacing near 1 is :math:`2^{-7} \approx
-        0.0078`), silently reproducing the :math:`t = 1` singularity this
-        was meant to avoid. ``0.99`` is safe in ``bfloat16``
-        (rounds to ``0.98828125``). If sampling or training in
-        ``bfloat16``/``float16``, choose ``t_max`` with enough margin for
-        the dtype used.
+        The reverse-process drift :math:`\dot{\alpha}(t)/\alpha(t)` is
+        singular at :math:`t = 1`. The default ``t_max=0.99`` keeps
+        sampling clear of it (``0.999`` would round to exactly ``1.0`` in
+        ``bfloat16``); constructing with ``t_max=1.0`` emits a
+        ``UserWarning``. Training with
+        :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`
+        stays exact at any ``t_max``, including ``1.0``.
 
     Parameters
     ----------
     t_min : float, optional
-        Minimum diffusion time used when sampling training times, by
-        default 0.0. Must satisfy ``0 <= t_min < t_max``. Set slightly
-        above 0 (e.g. ``1e-3``) when training an x0-predictor, since the
-        x0-to-flow conversion is singular at :math:`t = 0`.
+        Smallest training time, by default 0.0. Requires
+        ``0 <= t_min < t_max``. Set slightly above 0 (e.g. ``1e-3``) for
+        x0-predictors, whose flow conversion is singular at :math:`t = 0`.
     t_max : float, optional
-        Maximum diffusion time, by default 1.0. Used as the initial time for
-        sampling time-steps and as the upper bound for training times. Must
-        satisfy ``t_min < t_max <= 1``.
+        Largest diffusion time, by default 0.99: the first sampling
+        time-step and the upper bound for training times. Requires
+        ``t_min < t_max <= 1``; ``t_max=1.0`` is valid for training but
+        emits a ``UserWarning`` (see the warning above).
 
     Note
     ----
@@ -107,8 +81,7 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
 
     Examples
     --------
-    Basic training and sampling workflow using the flow matching noise
-    scheduler:
+    Basic training and sampling workflow:
 
     >>> import torch
     >>> from physicsnemo.diffusion.noise_schedulers import (
@@ -119,15 +92,15 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
     >>>
     >>> # Training: sample times and interpolate towards noise
     >>> x0 = torch.randn(4, 3, 8, 8)  # Clean data
-    >>> t = scheduler.sample_time(4)    # Uniform times in [0, 1]
+    >>> t = scheduler.sample_time(4)    # Uniform times in [0, t_max]
     >>> x_t = scheduler.add_noise(x0, t)  # (1 - t) * x0 + t * noise
     >>> x_t.shape
     torch.Size([4, 3, 8, 8])
     >>>
     >>> # Sampling: generate timesteps and initial latents
     >>> t_steps = scheduler.timesteps(10)
-    >>> tN = t_steps[0].expand(4)  # Initial time (t=1) for batch of 4
-    >>> xN = scheduler.init_latents((3, 8, 8), tN)  # Pure Gaussian noise
+    >>> tN = t_steps[0].expand(4)  # Initial time (t=0.99) for batch of 4
+    >>> xN = scheduler.init_latents((3, 8, 8), tN)  # Near-pure Gaussian noise
     >>> xN.shape
     torch.Size([4, 3, 8, 8])
     >>>
@@ -147,12 +120,23 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
     def __init__(
         self,
         t_min: float = 0.0,
-        t_max: float = 1.0,
+        t_max: float = 0.99,
     ) -> None:
         if not 0.0 <= t_min < t_max <= 1.0:
             raise ValueError(
                 f"t_min and t_max must satisfy 0 <= t_min < t_max <= 1, "
                 f"got t_min={t_min}, t_max={t_max}."
+            )
+        if t_max >= 1.0:
+            warnings.warn(
+                "RectifiedFlowNoiseScheduler was constructed with t_max=1.0: "
+                "the reverse-process drift is singular at t=1, so sampling "
+                "with get_denoiser starting from t_max=1.0 will produce "
+                "non-finite values. Use t_max slightly below 1 for sampling "
+                "(the default is 0.99; avoid 0.999, which rounds to 1.0 in "
+                "bfloat16). Training with FlowMatchingLoss is unaffected.",
+                UserWarning,
+                stacklevel=2,
             )
         self.t_min = t_min
         self.t_max = t_max
@@ -209,7 +193,7 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
         device : torch.device, optional
             Device to place the tensor on.
         dtype : torch.dtype, optional
-            Data type of the tensor.
+            Tensor data type.
 
         Returns
         -------
@@ -238,7 +222,7 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
         device : torch.device, optional
             Device to place the tensor on.
         dtype : torch.dtype, optional
-            Data type of the tensor.
+            Tensor data type.
 
         Returns
         -------
@@ -255,7 +239,7 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
         r"""
         Compute flow matching loss weight: :math:`w(t) = 1`.
 
-        The standard flow matching objective uses uniform weighting across
+        Standard flow matching uses uniform weighting across
         diffusion times.
 
         Parameters
@@ -269,213 +253,3 @@ class RectifiedFlowNoiseScheduler(LinearGaussianNoiseScheduler):
             Loss weight of shape :math:`(N,)`, all ones.
         """
         return torch.ones_like(t)
-
-    def get_denoiser(
-        self,
-        *,
-        score_predictor: Predictor | None = None,
-        x0_predictor: Predictor | None = None,
-        epsilon_predictor: Predictor | None = None,
-        flow_predictor: Predictor | None = None,
-        denoising_type: Literal["ode", "sde"] = "ode",
-        **kwargs: Any,
-    ) -> Denoiser:
-        r"""
-        Factory that converts a predictor to a denoiser for sampling.
-
-        Accepts exactly one of **flow-predictor**, **x0-predictor**,
-        **epsilon-predictor**, or **score-predictor**. The returned denoiser
-        computes the right-hand side of the reverse ODE or SDE using
-        closed-form expressions for the flow matching path.
-
-        For the ODE (``denoising_type="ode"``), the right-hand side is the
-        flow field :math:`\mathbf{v}(\mathbf{x}, t)`:
-
-        .. math::
-            \frac{d\mathbf{x}}{dt} = \mathbf{v}(\mathbf{x}, t) =
-            \begin{cases}
-                \hat{\mathbf{v}} & \text{(flow)} \\
-                (\mathbf{x} - \hat{\mathbf{x}}_0) / t & \text{(x0)} \\
-                (\hat{\boldsymbol{\epsilon}} - \mathbf{x}) / (1 - t)
-                & \text{(epsilon)} \\
-                -(\mathbf{x} + t\, \hat{s}) / (1 - t) & \text{(score)}
-            \end{cases}
-
-        For the SDE (``denoising_type="sde"``), the deterministic part of
-        the drift is:
-
-        .. math::
-            \mathbf{v}(\mathbf{x}, t) - \frac{t}{1 - t}\,
-            s(\mathbf{x}, t)
-
-        where :math:`s` is the score (the stochastic term :math:`g(t)
-        d\mathbf{W}` is handled by the solver).
-
-        .. warning::
-
-            The flow and x0 parameterizations are regular at
-            :math:`t = 1`, so ODE sampling can start from pure noise
-            (``t_max=1``, the default). The epsilon and score
-            parameterizations, as well as ``denoising_type="sde"``, are
-            singular at :math:`t = 1`; use them with ``t_max < 1``.
-
-        Parameters
-        ----------
-        score_predictor : Predictor, optional
-            A score-predictor that takes ``(x_t, t)`` and returns the score.
-            Mutually exclusive with the other predictor arguments.
-        x0_predictor : Predictor, optional
-            An x0-predictor that takes ``(x_t, t)`` and returns an estimate
-            of clean data :math:`\hat{\mathbf{x}}_0`. Mutually exclusive with
-            the other predictor arguments.
-        epsilon_predictor : Predictor, optional
-            An epsilon-predictor that takes ``(x_t, t)`` and returns an
-            estimate of the noise :math:`\hat{\boldsymbol{\epsilon}}`.
-            Mutually exclusive with the other predictor arguments.
-        flow_predictor : Predictor, optional
-            A flow-predictor that takes ``(x_t, t)`` and returns an
-            estimate of the flow (velocity) :math:`\hat{\mathbf{v}}` (e.g. a
-            model trained with
-            :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`).
-            Mutually exclusive with the other predictor arguments.
-        denoising_type : {"ode", "sde"}, default="ode"
-            Type of reverse process. Use ``"ode"`` for deterministic sampling,
-            ``"sde"`` for stochastic sampling.
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        Denoiser
-            A denoiser computing the RHS of the reverse ODE/SDE. Implements
-            the :class:`~physicsnemo.diffusion.Denoiser` interface.
-
-        Raises
-        ------
-        ValueError
-            If not exactly one of ``score_predictor``, ``x0_predictor``,
-            ``epsilon_predictor``, or ``flow_predictor`` is provided.
-        ValueError
-            If ``denoising_type`` is not ``"ode"`` or ``"sde"``.
-        ValueError
-            If ``denoising_type="sde"`` and this scheduler's ``t_max >= 1``,
-            since the SDE drift is singular at :math:`t = 1`.
-
-        Examples
-        --------
-        Generate ODE RHS from a flow-predictor:
-
-        >>> import torch
-        >>> scheduler = RectifiedFlowNoiseScheduler()
-        >>> flow_pred = lambda x, t: -x  # Toy flow-predictor
-        >>> denoiser = scheduler.get_denoiser(flow_predictor=flow_pred)
-        >>> x = torch.randn(2, 3, 8, 8)
-        >>> t = torch.ones(2)
-        >>> dx_dt = denoiser(x, t)  # Returns ODE RHS for sampling
-        >>> dx_dt.shape
-        torch.Size([2, 3, 8, 8])
-        """
-        provided = sum(
-            p is not None
-            for p in (
-                score_predictor,
-                x0_predictor,
-                epsilon_predictor,
-                flow_predictor,
-            )
-        )
-        if provided != 1:
-            raise ValueError(
-                "Exactly one of 'score_predictor', 'x0_predictor', "
-                "'epsilon_predictor', or 'flow_predictor' must be provided."
-            )
-        if denoising_type not in ("ode", "sde"):
-            raise ValueError(
-                f"denoising_type must be 'ode' or 'sde', got '{denoising_type}'"
-            )
-        if denoising_type == "sde" and self.t_max >= 1.0:
-            raise ValueError(
-                "denoising_type='sde' is singular at t=1 for the flow matching "
-                f"path (division by 1 - t), but this scheduler has t_max="
-                f"{self.t_max} >= 1. Construct RectifiedFlowNoiseScheduler "
-                "with t_max < 1 (e.g. t_max=0.999) to use SDE sampling."
-            )
-
-        def _bc(t: Tensor, ndim: int) -> Tensor:
-            return t.reshape((-1,) + (1,) * (ndim - 1))
-
-        # Closed-form flow field (probability-flow ODE RHS)
-        if flow_predictor is not None:
-            flow_fn = flow_predictor
-        elif x0_predictor is not None:
-
-            def flow_fn(
-                x: Float[Tensor, " B *dims"],
-                t: Float[Tensor, " B"],
-            ) -> Float[Tensor, " B *dims"]:
-                x0 = x0_predictor(x, t)
-                return (x - x0) / _bc(t, x.ndim)
-
-        elif epsilon_predictor is not None:
-
-            def flow_fn(
-                x: Float[Tensor, " B *dims"],
-                t: Float[Tensor, " B"],
-            ) -> Float[Tensor, " B *dims"]:
-                eps = epsilon_predictor(x, t)
-                return (eps - x) / (1 - _bc(t, x.ndim))
-
-        else:
-
-            def flow_fn(
-                x: Float[Tensor, " B *dims"],
-                t: Float[Tensor, " B"],
-            ) -> Float[Tensor, " B *dims"]:
-                score = score_predictor(x, t)
-                t_bc = _bc(t, x.ndim)
-                return -(x + t_bc * score) / (1 - t_bc)
-
-        if denoising_type == "ode":
-            return flow_fn
-
-        # SDE: deterministic drift = flow - (1/2) g^2 * score, with
-        # g^2 = 2t / (1 - t) for the flow matching path.
-        if score_predictor is not None:
-            score_fn = score_predictor
-        elif x0_predictor is not None:
-            x0_to_score = self.x0_to_score
-
-            def score_fn(
-                x: Float[Tensor, " B *dims"],
-                t: Float[Tensor, " B"],
-            ) -> Float[Tensor, " B *dims"]:
-                return x0_to_score(x0_predictor(x, t), x, t)
-
-        elif epsilon_predictor is not None:
-            epsilon_to_score = self.epsilon_to_score
-
-            def score_fn(
-                x: Float[Tensor, " B *dims"],
-                t: Float[Tensor, " B"],
-            ) -> Float[Tensor, " B *dims"]:
-                return epsilon_to_score(epsilon_predictor(x, t), t)
-
-        else:
-            flow_to_x0 = self.flow_to_x0
-            x0_to_score_v = self.x0_to_score
-
-            def score_fn(
-                x: Float[Tensor, " B *dims"],
-                t: Float[Tensor, " B"],
-            ) -> Float[Tensor, " B *dims"]:
-                x0 = flow_to_x0(flow_predictor(x, t), x, t)
-                return x0_to_score_v(x0, x, t)
-
-        def sde_denoiser(
-            x: Float[Tensor, " B *dims"],
-            t: Float[Tensor, " B"],
-        ) -> Float[Tensor, " B *dims"]:
-            t_bc = _bc(t, x.ndim)
-            return flow_fn(x, t) - (t_bc / (1 - t_bc)) * score_fn(x, t)
-
-        return sde_denoiser

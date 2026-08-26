@@ -104,7 +104,7 @@ def test_concat_wrapper_plain_tensor_as_image_condition():
 
 
 class _RecordTimeModel(torch.nn.Module):
-    """Backbone stand-in that records the ``t`` it was called with."""
+    """Backbone stand-in that records the ``t`` it receives."""
 
     def __init__(self, out_channels: int = 3):
         super().__init__()

@@ -30,16 +30,8 @@ One of:
 - ``"x0"``: clean-data prediction :math:`\\hat{\\mathbf{x}}_0`.
 - ``"score"``: score :math:`\\nabla_{\\mathbf{x}_t} \\log p(\\mathbf{x}_t)`.
 - ``"epsilon"``: noise prediction :math:`\\hat{\\boldsymbol{\\epsilon}}`.
-- ``"flow"``: flow matching flow (velocity) :math:`\\hat{\\mathbf{v}}
-  = d\\mathbf{x}_t/dt`, i.e. the time-derivative of a linear-Gaussian path
-  (see :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` and
-  :meth:`~physicsnemo.diffusion.noise_schedulers.LinearGaussianNoiseScheduler.x0_to_flow`).
-  Named ``"flow"`` rather than ``"velocity"``/``"v"``: it is a different
-  quantity from the Salimans-Ho "v-prediction"
-  :math:`\\mathbf{v} = \\alpha(t)\\boldsymbol{\\epsilon} - \\sigma(t)\\mathbf{x}_0`
-  for most noise schedules; the two coincide only for the trigonometric
-  (TrigFlow-style) schedule where :math:`\\dot{\\alpha}(t) = -\\sigma(t)` and
-  :math:`\\dot{\\sigma}(t) = \\alpha(t)`.
+- ``"flow"``: flow matching velocity :math:`\\hat{\\mathbf{v}}
+  = d\\mathbf{x}_t/dt`
 """
 
 

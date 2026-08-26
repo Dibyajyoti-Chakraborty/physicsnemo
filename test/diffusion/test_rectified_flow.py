@@ -17,13 +17,16 @@
 """Tests for RectifiedFlowNoiseScheduler.
 
 RectifiedFlowNoiseScheduler is a LinearGaussianNoiseScheduler
-subclass, so it is also covered by the generic non-regression suite in
-test_noise_schedulers.py through the scheduler's inherited methods (add_noise,
-score conversions, etc. — exercised indirectly via _MinimalScheduler-style
-checks). This module focuses on behavior specific to the rectified flow
-matching path: the closed-form flow field, the t=0/t=1 singularities
-documented on the scheduler, and get_denoiser's flow_predictor support.
+subclass, so the generic suite in test_noise_schedulers.py also covers its
+inherited methods (add_noise, score conversions, and so on).
+This module focuses on behavior specific to the rectified flow
+matching path: the path coefficients, time sampling, the t_max=1.0
+construction warning (the reverse-process drift inherited from the generic
+get_denoiser is singular at t=1; the default t_max=0.99 stays clear of it),
+and sampling through the generic get_denoiser.
 """
+
+import warnings
 
 import pytest
 import torch
@@ -53,12 +56,12 @@ class TestRectifiedFlowNoiseSchedulerConstructor:
     def test_default_attributes(self):
         s = RectifiedFlowNoiseScheduler()
         assert s.t_min == pytest.approx(0.0)
-        assert s.t_max == pytest.approx(1.0)
+        assert s.t_max == pytest.approx(0.99)
 
     def test_custom_attributes(self):
-        s = RectifiedFlowNoiseScheduler(t_min=1e-3, t_max=0.999)
+        s = RectifiedFlowNoiseScheduler(t_min=1e-3, t_max=0.95)
         assert s.t_min == pytest.approx(1e-3)
-        assert s.t_max == pytest.approx(0.999)
+        assert s.t_max == pytest.approx(0.95)
 
     def test_is_noise_scheduler(self):
         assert isinstance(RectifiedFlowNoiseScheduler(), NoiseScheduler)
@@ -74,6 +77,17 @@ class TestRectifiedFlowNoiseSchedulerConstructor:
     def test_invalid_time_range(self, t_min, t_max):
         with pytest.raises(ValueError, match="t_min and t_max"):
             RectifiedFlowNoiseScheduler(t_min=t_min, t_max=t_max)
+
+    def test_warns_at_t_max_one(self):
+        """Explicit t_max=1.0 warns: sampling is singular at t=1."""
+        with pytest.warns(UserWarning, match="t_max"):
+            RectifiedFlowNoiseScheduler(t_max=1.0)
+
+    def test_no_warning_by_default(self):
+        """The default t_max=0.99 is sampling-safe and must not warn."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            RectifiedFlowNoiseScheduler()
 
 
 # =============================================================================
@@ -132,7 +146,7 @@ class TestRectifiedFlowTimeSampling:
         s = RectifiedFlowNoiseScheduler()
         t_steps = s.timesteps(NUM_STEPS, device=device)
         assert t_steps.shape == (NUM_STEPS + 1,)
-        assert t_steps[0].item() == pytest.approx(1.0)
+        assert t_steps[0].item() == pytest.approx(0.99)
         assert t_steps[-1].item() == pytest.approx(0.0, abs=1e-7)
 
     def test_timesteps_are_decreasing(self, device):
@@ -142,9 +156,9 @@ class TestRectifiedFlowTimeSampling:
         assert (diffs >= -1e-7).all()
 
     def test_timesteps_respects_t_max(self, device):
-        s = RectifiedFlowNoiseScheduler(t_max=0.999)
+        s = RectifiedFlowNoiseScheduler(t_max=0.95)
         t_steps = s.timesteps(NUM_STEPS, device=device)
-        assert t_steps[0].item() == pytest.approx(0.999)
+        assert t_steps[0].item() == pytest.approx(0.95)
 
     def test_sample_time_bounds(self, device):
         s = RectifiedFlowNoiseScheduler(t_min=0.1, t_max=0.9)
@@ -179,12 +193,36 @@ class TestRectifiedFlowSpatialMethods:
 
 
 # =============================================================================
+# Conversion Tests
+# =============================================================================
+
+
+class TestRectifiedFlowConversions:
+    """Scheduler-specific checks of the prediction-conversion helpers."""
+
+    def test_flow_to_score_regular_at_t_equals_one(self, device):
+        """flow_to_score stays finite at t=1 (where alpha=0), matching the
+        flow_to_x0 -> x0_to_score composition; only its inverse
+        score_to_flow is singular there."""
+        s = RectifiedFlowNoiseScheduler()
+        v = make_input(SHAPE, seed=8, device=device)
+        x_t = make_input(SHAPE, seed=9, device=device)
+        t = torch.ones(BATCH, device=device)
+        direct = s.flow_to_score(v, x_t, t)
+        composed = s.x0_to_score(s.flow_to_x0(v, x_t, t), x_t, t)
+        assert torch.isfinite(direct).all()
+        torch.testing.assert_close(direct, composed)
+        # At t=1 the marginal is pure noise, whose score is exactly -x_t.
+        torch.testing.assert_close(direct, -x_t)
+
+
+# =============================================================================
 # get_denoiser Tests
 # =============================================================================
 
 
 class TestRectifiedFlowGetDenoiser:
-    """Tests for get_denoiser() with the closed-form flow matching RHS."""
+    """Tests for sampling through the generic (inherited) get_denoiser."""
 
     def test_validates_multiple_predictors(self, device):
         s = RectifiedFlowNoiseScheduler()
@@ -200,22 +238,13 @@ class TestRectifiedFlowGetDenoiser:
         with pytest.raises(ValueError, match="denoising_type"):
             s.get_denoiser(flow_predictor=pred, denoising_type="bad")
 
-    def test_sde_rejects_default_t_max(self, device):
-        """SDE sampling is singular at t=1, so it must be rejected when
-        t_max=1 (the default) instead of silently producing inf/nan."""
-        s = RectifiedFlowNoiseScheduler()
-        pred = lambda x, t: x  # noqa: E731
-        with pytest.raises(ValueError, match="t_max"):
-            s.get_denoiser(flow_predictor=pred, denoising_type="sde")
-
-    def test_sde_accepts_t_max_below_one(self, device):
-        s = RectifiedFlowNoiseScheduler(t_max=0.999)
-        pred = lambda x, t: x  # noqa: E731
-        # Should not raise.
-        s.get_denoiser(flow_predictor=pred, denoising_type="sde")
-
     def test_flow_predictor_ode_rhs_is_the_prediction(self, device):
-        """For a flow_predictor, the ODE RHS is the flow itself."""
+        """For a flow_predictor, the ODE RHS equals the flow itself.
+
+        The generic path routes flow -> x0 -> score -> drift/diffusion, which
+        is algebraically the identity, so the result matches up to float
+        rounding.
+        """
         s = RectifiedFlowNoiseScheduler()
         x = make_input(SHAPE, seed=2, device=device)
         t = torch.full((BATCH,), 0.5, device=device)
@@ -224,7 +253,7 @@ class TestRectifiedFlowGetDenoiser:
         torch.testing.assert_close(denoiser(x, t), flow_pred(x, t))
 
     def test_x0_predictor_matches_flow_predictor(self, device):
-        """An x0-predictor and its equivalent flow-predictor agree."""
+        """An x0-predictor and its matching flow-predictor agree."""
         s = RectifiedFlowNoiseScheduler()
         x = make_input(SHAPE, seed=3, device=device)
         t = torch.full((BATCH,), 0.5, device=device)
@@ -241,12 +270,8 @@ class TestRectifiedFlowGetDenoiser:
         torch.testing.assert_close(denoiser_x0(x, t), denoiser_v(x, t))
 
     def test_epsilon_predictor_matches_flow_predictor(self, device):
-        """An epsilon-predictor and its equivalent flow-predictor agree.
-
-        t_max is kept below 1 since the epsilon parameterization is singular
-        at t=1 (see RectifiedFlowNoiseScheduler.get_denoiser docstring).
-        """
-        s = RectifiedFlowNoiseScheduler(t_max=0.999)
+        """An epsilon-predictor and its matching flow-predictor agree."""
+        s = RectifiedFlowNoiseScheduler()
         x = make_input(SHAPE, seed=4, device=device)
         t = torch.full((BATCH,), 0.5, device=device)
 
@@ -263,8 +288,8 @@ class TestRectifiedFlowGetDenoiser:
         torch.testing.assert_close(denoiser_eps(x, t), denoiser_v(x, t))
 
     def test_score_predictor_matches_flow_predictor(self, device):
-        """A score-predictor and its equivalent flow-predictor agree."""
-        s = RectifiedFlowNoiseScheduler(t_max=0.999)
+        """A score-predictor and its matching flow-predictor agree."""
+        s = RectifiedFlowNoiseScheduler()
         x = make_input(SHAPE, seed=5, device=device)
         t = torch.full((BATCH,), 0.5, device=device)
 
@@ -281,7 +306,7 @@ class TestRectifiedFlowGetDenoiser:
         torch.testing.assert_close(denoiser_score(x, t), denoiser_v(x, t))
 
     def test_sde_denoiser_shape(self, device):
-        s = RectifiedFlowNoiseScheduler(t_max=0.999)
+        s = RectifiedFlowNoiseScheduler()
         x = make_input(SHAPE, seed=6, device=device)
         t = torch.full((BATCH,), 0.5, device=device)
         flow_pred = lambda x, t: -x  # noqa: E731
@@ -290,15 +315,16 @@ class TestRectifiedFlowGetDenoiser:
         assert out.shape == x.shape
         assert torch.isfinite(out).all()
 
-    def test_ode_regular_at_t_equals_one_for_flow(self, device):
-        """Unlike epsilon/score, flow and x0 denoisers are regular at t=1."""
+    def test_ode_singular_at_t_equals_one(self, device):
+        """The generic drift-based denoiser is singular at t=1: this is the
+        behavior the construction-time t_max warning exists to flag."""
         s = RectifiedFlowNoiseScheduler()
         x = make_input(SHAPE, seed=7, device=device)
         t = torch.ones(BATCH, device=device)
         flow_pred = lambda x, t: -x  # noqa: E731
         denoiser = s.get_denoiser(flow_predictor=flow_pred)
         out = denoiser(x, t)
-        assert torch.isfinite(out).all()
+        assert not torch.isfinite(out).all()
 
 
 # =============================================================================

@@ -652,15 +652,15 @@ class TestWeightedMSEDSMLossWithPreconditioner:
 
 FM_PREDICTION_TYPES = ["flow", "x0", "epsilon", "score"]
 
-# RectifiedFlowNoiseScheduler is singular at t=0 for the x0 conversion and at
-# t=1 for the epsilon/score conversions (see RectifiedFlowNoiseScheduler and
-# FlowMatchingLoss docstrings), so each prediction type gets a scheduler with
-# a time range that avoids its singularity.
+# RectifiedFlowNoiseScheduler is singular at t=0 for the x0 conversion; the
+# epsilon/score conversions are singular at t=1, which the default t_max=0.99
+# already avoids (see RectifiedFlowNoiseScheduler and FlowMatchingLoss
+# docstrings).
 FM_SCHEDULER_KWARGS = {
     "flow": {},
     "x0": {"t_min": 1e-3},
-    "epsilon": {"t_max": 0.999},
-    "score": {"t_max": 0.999},
+    "epsilon": {},
+    "score": {},
 }
 
 
@@ -738,7 +738,7 @@ class TestFlowMatchingLossConstructor:
             FlowMatchingLoss(model, scheduler, reduction="bad")
 
     def test_requires_linear_gaussian_scheduler(self):
-        """Non-linear-Gaussian schedulers (missing alpha_dot/sigma_dot) are rejected."""
+        """The loss rejects schedulers that lack the flow conversion methods."""
 
         class _NotLinearGaussian:
             def sample_time(self, N, *, device=None, dtype=None):
@@ -879,7 +879,7 @@ class TestFlowMatchingLossCompile:
         device,
         prediction_type,
     ):
-        """Compiled loss produces finite output and graph is reused on second call."""
+        """Compiled loss is finite and the second call reuses the graph."""
         torch._dynamo.config.error_on_recompile = True
 
         model = instantiate_model_deterministic(
@@ -966,7 +966,7 @@ class TestWeightedFlowMatchingLossConstructor:
             WeightedFlowMatchingLoss(model, scheduler, reduction="bad")
 
     def test_requires_linear_gaussian_scheduler(self):
-        """Non-linear-Gaussian schedulers (missing alpha_dot/sigma_dot) are rejected."""
+        """The loss rejects schedulers that lack the flow conversion methods."""
 
         class _NotLinearGaussian:
             def sample_time(self, N, *, device=None, dtype=None):
@@ -1126,7 +1126,7 @@ class TestWeightedFlowMatchingLossCompile:
         device,
         prediction_type,
     ):
-        """Compiled loss produces finite output and graph is reused on second call."""
+        """Compiled loss is finite and the second call reuses the graph."""
         torch._dynamo.config.error_on_recompile = True
 
         model = instantiate_model_deterministic(

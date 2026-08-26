@@ -290,8 +290,37 @@ class TestLinearGaussianNoiseScheduler:
         v_back = s.x0_to_flow(x0, x_t, t)
         assert torch.allclose(v, v_back, atol=1e-5)
 
+    def test_concrete_score_to_flow_to_score(self, device):
+        s = _MinimalScheduler()
+        score = make_input((2, 4), seed=25, device=device)
+        x_t = make_input((2, 4), seed=26, device=device)
+        t = torch.tensor([0.5, 0.5], device=device)
+        v = s.score_to_flow(score, x_t, t)
+        score_back = s.flow_to_score(v, x_t, t)
+        assert torch.allclose(score, score_back, atol=1e-5)
+
+    def test_score_to_flow_matches_x0_composition(self, device):
+        """score_to_flow equals the score_to_x0 -> x0_to_flow composition."""
+        s = _MinimalScheduler()
+        score = make_input((2, 4), seed=27, device=device)
+        x_t = make_input((2, 4), seed=28, device=device)
+        t = torch.tensor([0.5, 0.5], device=device)
+        direct = s.score_to_flow(score, x_t, t)
+        composed = s.x0_to_flow(s.score_to_x0(score, x_t, t), x_t, t)
+        torch.testing.assert_close(direct, composed)
+
+    def test_flow_to_score_matches_x0_composition(self, device):
+        """flow_to_score equals the flow_to_x0 -> x0_to_score composition."""
+        s = _MinimalScheduler()
+        v = make_input((2, 4), seed=29, device=device)
+        x_t = make_input((2, 4), seed=30, device=device)
+        t = torch.tensor([0.5, 0.5], device=device)
+        direct = s.flow_to_score(v, x_t, t)
+        composed = s.x0_to_score(s.flow_to_x0(v, x_t, t), x_t, t)
+        torch.testing.assert_close(direct, composed)
+
     def test_get_denoiser_with_flow_predictor(self, device):
-        """flow_predictor produces the same RHS as an equivalent x0_predictor."""
+        """flow_predictor produces the same RHS as a matching x0_predictor."""
         s = _MinimalScheduler()
         x = make_input((2, 4), seed=19, device=device)
         t = torch.tensor([0.5, 0.5], device=device)

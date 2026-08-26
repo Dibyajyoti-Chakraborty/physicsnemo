@@ -732,11 +732,9 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         t: Float[Tensor, " B"],
     ) -> Float[Tensor, " B *dims"]:
         r"""
-        Convert x0-prediction to flow prediction.
+        Convert x0-prediction to flow (velocity) prediction.
 
-        The flow (velocity) is the conditional time derivative of the
-        forward process :math:`\mathbf{x}_t = \alpha(t)\mathbf{x}_0
-        + \sigma(t)\boldsymbol{\epsilon}`:
+        The flow is the conditional time derivative of the forward process:
 
         .. math::
             \mathbf{v} = \dot{\alpha}(t)\mathbf{x}_0
@@ -746,23 +744,9 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
             - \frac{\dot{\sigma}(t)}{\sigma(t)}\alpha(t)\right)
             \hat{\mathbf{x}}_0
 
-        This is the target parameterization used in flow matching
-        (``prediction_type="flow"`` in
-        :class:`~physicsnemo.diffusion.base.PredictorType`). See
-        :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`
-        and
-        :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`.
-
-        .. note::
-
-            This is a different quantity from the Salimans-Ho
-            "v-prediction" :math:`\mathbf{v} = \alpha(t)\boldsymbol{\epsilon}
-            - \sigma(t)\mathbf{x}_0` for most noise schedules; the two
-            coincide only for the trigonometric (TrigFlow-style) schedule
-            where :math:`\dot{\alpha}(t) = -\sigma(t)` and
-            :math:`\dot{\sigma}(t) = \alpha(t)`. ``PredictorType`` therefore
-            names this quantity ``"flow"`` rather than ``"velocity"``/``"v"``
-            to avoid ambiguity.
+        This is the ``"flow"`` target of
+        :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`; see
+        :data:`~physicsnemo.diffusion.base.PredictorType` for the naming.
 
         Parameters
         ----------
@@ -853,6 +837,122 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         denom = sigma_dot_t_bc * alpha_t_bc - alpha_dot_t_bc * sigma_t_bc
         return (sigma_dot_t_bc * x_t - sigma_t_bc * flow) / denom
 
+    def score_to_flow(
+        self,
+        score: Float[Tensor, " B *dims"],
+        x_t: Float[Tensor, " B *dims"],
+        t: Float[Tensor, " B"],
+    ) -> Float[Tensor, " B *dims"]:
+        r"""
+        Convert score prediction to flow prediction.
+
+        Composes :meth:`score_to_x0` and :meth:`x0_to_flow` in closed form:
+
+        .. math::
+            \hat{\mathbf{v}} = \frac{\dot{\alpha}(t) \mathbf{x}_t
+            + \left(\dot{\alpha}(t) \sigma^2(t)
+            - \dot{\sigma}(t)\sigma(t)\alpha(t)\right) s(\mathbf{x}_t, t)}
+            {\alpha(t)}
+
+        This is the probability-flow ODE right-hand side, singular where
+        :math:`\alpha(t) = 0`.
+
+        Parameters
+        ----------
+        score : Tensor
+            Predicted score :math:`s(\mathbf{x}_t, t)` of shape
+            :math:`(B, *)`.
+        x_t : Tensor
+            Current noisy state :math:`\mathbf{x}_t` with same shape as
+            ``score``.
+        t : Tensor
+            Diffusion time of shape :math:`(B,)`.
+
+        Returns
+        -------
+        Tensor
+            Flow (velocity) with same shape as ``score``.
+
+        Examples
+        --------
+        >>> from physicsnemo.diffusion.noise_schedulers import EDMNoiseScheduler
+        >>> scheduler = EDMNoiseScheduler()
+        >>> score = torch.randn(2, 4)
+        >>> x_t = torch.randn(2, 4)
+        >>> t = torch.tensor([1.0, 1.0])
+        >>> v = scheduler.score_to_flow(score, x_t, t)
+        >>> v.shape
+        torch.Size([2, 4])
+        """
+        expected_shape = (-1,) + (1,) * (score.ndim - 1)
+        t_bc = t.reshape(expected_shape)
+        alpha_t_bc = self.alpha(t_bc)
+        alpha_dot_t_bc = self.alpha_dot(t_bc)
+        sigma_t_bc = self.sigma(t_bc)
+        sigma_dot_t_bc = self.sigma_dot(t_bc)
+        coeff = (
+            alpha_dot_t_bc * sigma_t_bc**2 - sigma_dot_t_bc * sigma_t_bc * alpha_t_bc
+        )
+        return (alpha_dot_t_bc * x_t + coeff * score) / alpha_t_bc
+
+    def flow_to_score(
+        self,
+        flow: Float[Tensor, " B *dims"],
+        x_t: Float[Tensor, " B *dims"],
+        t: Float[Tensor, " B"],
+    ) -> Float[Tensor, " B *dims"]:
+        r"""
+        Convert flow prediction to score prediction.
+
+        Inverse of :meth:`score_to_flow`:
+
+        .. math::
+            s(\mathbf{x}_t, t) = \frac{\alpha(t)\hat{\mathbf{v}}
+            - \dot{\alpha}(t) \mathbf{x}_t}
+            {\dot{\alpha}(t) \sigma^2(t)
+            - \dot{\sigma}(t)\sigma(t)\alpha(t)}
+
+        Singular where :math:`\sigma(t) = 0`; regular where only
+        :math:`\alpha(t) = 0`.
+
+        Parameters
+        ----------
+        flow : Tensor
+            Predicted flow (velocity) :math:`\hat{\mathbf{v}}` of shape
+            :math:`(B, *)`.
+        x_t : Tensor
+            Current noisy state :math:`\mathbf{x}_t` with same shape as
+            ``flow``.
+        t : Tensor
+            Diffusion time of shape :math:`(B,)`.
+
+        Returns
+        -------
+        Tensor
+            Score with same shape as ``flow``.
+
+        Examples
+        --------
+        >>> from physicsnemo.diffusion.noise_schedulers import EDMNoiseScheduler
+        >>> scheduler = EDMNoiseScheduler()
+        >>> v = torch.randn(2, 4)
+        >>> x_t = torch.randn(2, 4)
+        >>> t = torch.tensor([1.0, 1.0])
+        >>> score = scheduler.flow_to_score(v, x_t, t)
+        >>> score.shape
+        torch.Size([2, 4])
+        """
+        expected_shape = (-1,) + (1,) * (flow.ndim - 1)
+        t_bc = t.reshape(expected_shape)
+        alpha_t_bc = self.alpha(t_bc)
+        alpha_dot_t_bc = self.alpha_dot(t_bc)
+        sigma_t_bc = self.sigma(t_bc)
+        sigma_dot_t_bc = self.sigma_dot(t_bc)
+        denom = (
+            alpha_dot_t_bc * sigma_t_bc**2 - sigma_dot_t_bc * sigma_t_bc * alpha_t_bc
+        )
+        return (alpha_t_bc * flow - alpha_dot_t_bc * x_t) / denom
+
     def get_denoiser(
         self,
         *,
@@ -885,12 +985,11 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         where :math:`s(\mathbf{x}, t)` is the score. When an x0-predictor is
         provided, the score is computed internally via :meth:`x0_to_score`.
         When an epsilon-predictor is provided, the score is computed internally
-        via :meth:`epsilon_to_score`. When a flow-predictor is provided,
-        the score is computed internally via :meth:`flow_to_x0` followed
-        by :meth:`x0_to_score`. When a score-predictor is provided, it
-        is used directly. *Note:* As usually done in SDE integration, the
-        stochastic term :math:`g(t) d\mathbf{W}` is handled by the solver,
-        not returned by the denoiser itself.
+        via :meth:`epsilon_to_score`. A score-predictor applies
+        directly. Given a flow-predictor, the denoiser computes the score
+        via :meth:`flow_to_score`. *Note:* following SDE integration
+        convention, the solver handles the stochastic term
+        :math:`g(t) d\mathbf{W}`, which the denoiser itself does not return.
 
         Parameters
         ----------
@@ -914,8 +1013,8 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
             A flow-predictor that takes ``(x_t, t)`` and returns an
             estimate of the flow (velocity) :math:`\hat{\mathbf{v}}` (e.g. a
             model trained with flow matching on this scheduler's path). The
-            score is computed internally via :meth:`flow_to_x0` and
-            :meth:`x0_to_score`. Mutually exclusive with the other predictors.
+            denoiser computes the score internally via :meth:`flow_to_score`.
+            Mutually exclusive with the other predictors.
         denoising_type : {"ode", "sde"}, default="ode"
             Type of reverse process. Use ``"ode"`` for deterministic sampling,
             ``"sde"`` for stochastic sampling.
@@ -931,8 +1030,8 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         Raises
         ------
         ValueError
-            If not exactly one of ``score_predictor``, ``x0_predictor``,
-            ``epsilon_predictor``, or ``flow_predictor`` is provided.
+            If the call does not supply exactly one of ``score_predictor``,
+            ``x0_predictor``, ``epsilon_predictor``, or ``flow_predictor``.
 
         Examples
         --------
@@ -1000,16 +1099,13 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
 
             score_fn = _score
         elif flow_predictor is not None:
-            flow_to_x0 = self.flow_to_x0
-            x0_to_score_v = self.x0_to_score
+            flow_to_score = self.flow_to_score
 
             def _score_from_flow(
                 x: Float[Tensor, " B *dims"],
                 t: Float[Tensor, " B"],
             ) -> Float[Tensor, " B *dims"]:
-                v = flow_predictor(x, t)
-                x0 = flow_to_x0(v, x, t)
-                return x0_to_score_v(x0, x, t)
+                return flow_to_score(flow_predictor(x, t), x, t)
 
             score_fn = _score_from_flow
         elif epsilon_predictor is not None:

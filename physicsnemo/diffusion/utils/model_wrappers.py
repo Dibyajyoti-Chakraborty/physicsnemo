@@ -83,13 +83,11 @@ class ConcatConditionWrapper(Module):
         TensorDict key for the vector conditioning tensor to pass through to
         the backbone, by default ``"cond_vec"``.
     time_scale : float, optional
-        Multiplier applied to ``t`` before it is passed to the backbone's
-        time embedding, by default ``1.0``. Sinusoidal/positional timestep
-        embedders (DDPM++/DiT-style) are designed for inputs spanning
-        roughly ``[0, 1000]``; when training flow-matching models whose time
-        variable lives in ``[0, 1]``, set this accordingly so the embedding
-        operates in its designed dynamic range. Applied identically at training
-        and sampling time since it is part of the wrapped module.
+        Multiplier applied to ``t`` before the backbone's time embedding
+        receives it, by default ``1.0``. Set to e.g. ``999.0`` for flow
+        matching, whose ``[0, 1]``-valued times under-drive DDPM++/DiT-style
+        embedders built for ``[0, 1000]``. Part of the wrapped module, so it
+        applies identically at training and sampling time.
 
     Forward
     -------
