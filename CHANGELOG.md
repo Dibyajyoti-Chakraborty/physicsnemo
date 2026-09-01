@@ -256,16 +256,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next event (the new particle's features and inter-event delay) from the
   current particle population, an optional background mesh, and the simulation
   time. Independent rollouts form an ensemble for uncertainty quantification.
-- Adds rectified flow matching to the diffusion framework:
-  `physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler` and
-  `physicsnemo.diffusion.metrics.losses.FlowMatchingLoss`, which regresses a
-  flow/velocity target and also accepts `"x0"`/`"epsilon"`/`"score"`
-  prediction types on any `LinearGaussianNoiseScheduler`.
-  `physicsnemo.diffusion.metrics.losses.WeightedFlowMatchingLoss` extends it
-  with an element-wise weight such as a binary mask. `PredictorType` gains a
-  `"flow"` member. `get_denoiser` and `LinearGaussianNoiseScheduler` gain
-  `flow_predictor` support and the `x0_to_flow` / `flow_to_x0` and
-  `score_to_flow` / `flow_to_score` conversions.
+- Extends the diffusion module to support flow matching. The new API
+  surface covers three pieces:
+  - New losses in `physicsnemo.diffusion.metrics.losses` train against a
+    flow/velocity target: `FlowMatchingLoss`, plus `WeightedFlowMatchingLoss`
+    for an element-wise weight such as a binary mask.
+  - A dedicated `RectifiedFlowNoiseScheduler` in
+    `physicsnemo.diffusion.noise_schedulers` provides a rectified-flow
+    schedule.
+  - Module-wide support for flow predictors, enabled by new conversion
+    functions in `LinearGaussianNoiseScheduler` (`x0_to_flow` / `flow_to_x0`
+    / `score_to_flow` / `flow_to_score`) and the corresponding conversion
+    callbacks everywhere conversions between prediction types are necessary.
 
 ### Changed
 
