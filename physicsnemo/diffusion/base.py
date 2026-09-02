@@ -38,12 +38,13 @@ One of:
 @runtime_checkable
 class DiffusionModel(Protocol):
     r"""
-    Protocol defining the common interface for diffusion models.
+    Protocol defining the common interface for diffusion and flow-matching
+    models.
 
-    A diffusion model is any neural network or function that transforms a noisy
-    state ``x`` at diffusion time (or noise level) ``t`` into a prediction.
-    This protocol defines the standard interface that all diffusion models must
-    satisfy.
+    A diffusion or flow-matching model is any neural network or function that
+    transforms a noisy state ``x`` at diffusion time (or noise level) ``t``
+    into a prediction. This protocol defines the standard interface that all
+    such models must meet.
 
     Any model or function that implements this interface can be used with
     preconditioners, losses, samplers, and other diffusion utilities.
@@ -51,10 +52,12 @@ class DiffusionModel(Protocol):
     The interface is **prediction-agnostic**: whether your model predicts
     clean data (:math:`\mathbf{x}_0`), noise (:math:`\epsilon`), score
     (:math:`\nabla \log p`), or velocity (:math:`\mathbf{v}`), the signature
-    remains the same.
+    remains the same. This makes the protocol equally suitable for diffusion
+    and flow-matching training objectives.
 
-    The interface supports both conditional and unconditional diffusion models.
-    The ``condition`` argument supports different conditioning scenarios:
+    The interface supports both conditional and unconditional models, for
+    both diffusion and flow matching. The ``condition`` argument supports
+    different conditioning scenarios:
 
     - **torch.Tensor**: Use when there is a single conditioning tensor
       (e.g., a class embedding or a single image).

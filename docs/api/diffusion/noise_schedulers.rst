@@ -6,7 +6,7 @@ Noise Schedulers
 .. currentmodule:: physicsnemo.diffusion.noise_schedulers
 
 Noise schedulers are the central abstraction in the PhysicsNeMo diffusion
-framework.  A noise scheduler defines the forward diffusion process (how noise
+framework. A noise scheduler defines the forward process (how noise
 is added to data) and provides the ingredients needed for both training and
 inference.  It is the *only* component that participates in every stage of
 the pipeline: training, loss computation, denoiser construction, and sampling.
@@ -32,8 +32,10 @@ During training, the noise scheduler is responsible for three operations:
 2. **Adding noise** via :meth:`~NoiseScheduler.add_noise`.
 3. **Computing loss weights** via :meth:`~NoiseScheduler.loss_weight`.
 
-These three methods are consumed by the
-:class:`~physicsnemo.diffusion.metrics.losses.MSEDSMLoss` training loss.
+The training losses use these three methods, including
+:class:`~physicsnemo.diffusion.metrics.losses.MSEDSMLoss` for diffusion and
+:class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` for flow
+matching.
 
 .. code-block:: python
 
