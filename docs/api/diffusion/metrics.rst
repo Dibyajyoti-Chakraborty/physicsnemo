@@ -22,9 +22,10 @@ time sampling, noise injection, and loss weighting.
 :class:`~physicsnemo.diffusion.metrics.losses.MSEDSMLoss` implements the
 MSE-based DSM loss and supports both x0-predictor and score-predictor
 training. :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` 
-implements the flow matching loss. It regresses a flow-predictor, or an
-x0-, epsilon-, or score-predictor converted through user-provided callbacks,
-against the flow of a linear-Gaussian path.
+implements the flow matching loss. It regresses a flow-predictor against a
+flow target computed by a user-provided ``x0_to_flow_fn``, typically the
+scheduler's ``x0_to_flow`` conversion. Callbacks also convert x0-, epsilon-,
+or score-predictors to flow estimates.
 
 :class:`~physicsnemo.diffusion.metrics.losses.WeightedFlowMatchingLoss`
 and :class:`~physicsnemo.diffusion.metrics.losses.WeightedMSEDSMLoss`

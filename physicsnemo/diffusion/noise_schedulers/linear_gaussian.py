@@ -862,7 +862,7 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         >>> flow_pred = flow_predictor(x_t, t)
         >>> flow_pred.shape
         torch.Size([2, 4])
-        >>> # Or simply: FlowMatchingLoss(..., prediction_type="x0")
+        >>> # Or: FlowMatchingLoss(..., prediction_type="x0", x0_to_flow_fn=scheduler.x0_to_flow)
         """
         expected_shape = (-1,) + (1,) * (x0.ndim - 1)
         t_bc = t.reshape(expected_shape)
@@ -998,7 +998,7 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         >>> flow_pred = flow_predictor(x_t, t)
         >>> flow_pred.shape
         torch.Size([2, 4])
-        >>> # Or simply: FlowMatchingLoss(..., prediction_type="score")
+        >>> # Or: FlowMatchingLoss(..., prediction_type="score", score_to_flow_fn=scheduler.score_to_flow)
         """
         expected_shape = (-1,) + (1,) * (score.ndim - 1)
         t_bc = t.reshape(expected_shape)

@@ -685,28 +685,30 @@ class FlowMatchingLoss:
     r"""
     Flow matching loss with a flow (velocity) regression target.
 
-    Given clean data :math:`\mathbf{x}_0` and a linear-Gaussian path
-    :math:`\mathbf{x}_t = \alpha(t)\mathbf{x}_0
-    + \sigma(t)\boldsymbol{\epsilon}`, the loss is:
+    Given clean data :math:`\mathbf{x}_0`, the noisy state
+    :math:`\mathbf{x}_t` produced by the noise scheduler, and a
+    user-provided ``x0_to_flow_fn`` that computes the flow target
+    :math:`\mathbf{v}(\mathbf{x}_0, \mathbf{x}_t, t)`, the loss is:
 
     .. math::
-        \mathcal{L} = \mathbb{E}_{t, \boldsymbol{\epsilon}}
+        \mathcal{L} = \mathbb{E}_{t}
         \left[ w(t) \left\| \hat{\mathbf{v}}(\mathbf{x}_t, t)
-        - \left(\dot{\alpha}(t)\mathbf{x}_0
-        + \dot{\sigma}(t)\boldsymbol{\epsilon}\right) \right\|^2 \right]
+        - \mathbf{v}(\mathbf{x}_0, \mathbf{x}_t, t) \right\|^2 \right]
 
-    With the default
-    :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`,
-    the target reduces to the standard rectified-flow form
+    With the default pairing of a
+    :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`
+    and its ``x0_to_flow`` method as the callback, the target is the
+    standard rectified-flow form
     :math:`\mathbf{v} = \boldsymbol{\epsilon} - \mathbf{x}_0` with uniform
-    time sampling and unit loss weight. Any
+    time sampling and unit loss weight. Any noise scheduler works when
+    paired with a matching ``x0_to_flow_fn``;
     :class:`~physicsnemo.diffusion.noise_schedulers.LinearGaussianNoiseScheduler`
-    subclass works, not only the flow matching path.
+    subclasses provide one ready-made.
 
     .. note::
 
-        For the flow matching path, the x0-to-flow conversion is singular
-        at :math:`t = 0` and the epsilon/score conversions at
+        For the rectified-flow schedule, the x0-to-flow conversion is
+        singular at :math:`t = 0` and the epsilon/score conversions at
         :math:`t = 1`; restrict sampled times accordingly (e.g.
         ``RectifiedFlowNoiseScheduler(t_min=1e-3)`` for x0 prediction).
 
@@ -933,11 +935,10 @@ class WeightedFlowMatchingLoss:
     ``weight`` argument that multiplies the per-element squared error.
 
     .. math::
-        \mathcal{L} = \mathbb{E}_{t, \boldsymbol{\epsilon}}
+        \mathcal{L} = \mathbb{E}_{t}
         \left[ w(t) \left\| \mathbf{m} \odot
         \left(\hat{\mathbf{v}}(\mathbf{x}_t, t)
-        - \left(\dot{\alpha}(t)\mathbf{x}_0
-        + \dot{\sigma}(t)\boldsymbol{\epsilon}\right)\right) \right\|^2 \right]
+        - \mathbf{v}(\mathbf{x}_0, \mathbf{x}_t, t)\right) \right\|^2 \right]
 
     where :math:`\mathbf{m}` is the element-wise weight (e.g., a binary
     mask over spatial regions, channels, or padded elements of
