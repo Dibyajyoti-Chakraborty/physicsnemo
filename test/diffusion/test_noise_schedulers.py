@@ -364,7 +364,7 @@ class TestLinearGaussianNoiseScheduler:
             "flow-score",
         ],
     )
-    def test_conversion_roundtrip(self, device, source, target):
+    def test_conversion_source_to_target_to_source(self, device, source, target):
         """source -> target -> source recovers the original prediction."""
         s = _MinimalScheduler()
         prediction = make_input((2, 4), seed=15, device=device)
