@@ -22,9 +22,9 @@ time sampling, noise injection, and loss weighting.
 :class:`~physicsnemo.diffusion.metrics.losses.MSEDSMLoss` implements the
 MSE-based DSM loss and supports both x0-predictor and score-predictor
 training. :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` 
-implements the flow matching loss. It regresses a flow-predictor, or an 
-internally converted x0-, epsilon-, or score-predictor, against the flow of a
-linear-Gaussian path.
+implements the flow matching loss. It regresses a flow-predictor, or an
+x0-, epsilon-, or score-predictor converted through user-provided callbacks,
+against the flow of a linear-Gaussian path.
 
 :class:`~physicsnemo.diffusion.metrics.losses.WeightedFlowMatchingLoss`
 and :class:`~physicsnemo.diffusion.metrics.losses.WeightedMSEDSMLoss`
@@ -47,25 +47,6 @@ regions or channels (for example, land versus ocean in weather applications).
         prediction_type="score",
         score_to_x0_fn=scheduler.score_to_x0,
     )
-
-
-.. _diffusion_metrics_reductions:
-
-Reductions and irregular data
-------------------------------
-
-With ``"mean"`` or ``"sum"``, the ``reduction`` of every loss above
-covers *all* elements, matching ``torch.nn`` loss conventions. For data
-that is not a dense grid, such as padded batches or variable-size point
-clouds and graphs, use ``reduction="none"`` to get the unreduced
-per-element loss and apply your own reduction: a masked mean,
-``torch_scatter.scatter_mean`` keyed by a graph index, and so on.
-
-.. code-block:: python
-
-    loss_fn = MSEDSMLoss(model, scheduler, reduction="none")
-    loss = loss_fn(x0)                      # per-element, same shape as x0
-    masked_loss = (loss * mask).sum() / mask.sum()
 
 
 Evaluation Metrics

@@ -16,6 +16,8 @@
 
 """Tests for diffusion noise schedulers."""
 
+import warnings
+
 import pytest
 import torch
 
@@ -24,6 +26,7 @@ from physicsnemo.diffusion.noise_schedulers import (
     IDDPMNoiseScheduler,
     LinearGaussianNoiseScheduler,
     NoiseScheduler,
+    RectifiedFlowNoiseScheduler,
     StudentTEDMNoiseScheduler,
     VENoiseScheduler,
     VPNoiseScheduler,
@@ -66,6 +69,8 @@ SCHEDULER_CONFIGS = [
     (VPNoiseScheduler, {"beta_min": 0.05, "beta_d": 25.0}, "vp_custom"),
     (StudentTEDMNoiseScheduler, {"nu": 10}, "studentt"),
     (StudentTEDMNoiseScheduler, {"nu": 5, "sigma_data": 1.0}, "studentt_custom"),
+    (RectifiedFlowNoiseScheduler, {}, "rf"),
+    (RectifiedFlowNoiseScheduler, {"t_min": 1e-3, "t_max": 0.95}, "rf_custom"),
 ]
 
 SPATIAL_CONFIGS = [
@@ -157,6 +162,46 @@ class TestStudentTEDMNoiseSchedulerConstructor:
     def test_invalid_nu(self):
         with pytest.raises(ValueError, match="nu must be > 2"):
             StudentTEDMNoiseScheduler(nu=2)
+
+
+class TestRectifiedFlowNoiseSchedulerConstructor:
+    """Tests for RectifiedFlowNoiseScheduler constructor and attributes."""
+
+    def test_default_attributes(self):
+        s = RectifiedFlowNoiseScheduler()
+        assert s.t_min == pytest.approx(0.0)
+        assert s.t_max == pytest.approx(0.99)
+
+    def test_custom_attributes(self):
+        s = RectifiedFlowNoiseScheduler(t_min=1e-3, t_max=0.95)
+        assert s.t_min == pytest.approx(1e-3)
+        assert s.t_max == pytest.approx(0.95)
+
+    def test_is_noise_scheduler(self):
+        assert isinstance(RectifiedFlowNoiseScheduler(), NoiseScheduler)
+
+    def test_is_linear_gaussian(self):
+        assert isinstance(RectifiedFlowNoiseScheduler(), LinearGaussianNoiseScheduler)
+
+    @pytest.mark.parametrize(
+        "t_min,t_max",
+        [(0.5, 0.5), (0.6, 0.4), (-0.1, 1.0), (0.0, 1.1)],
+        ids=["equal", "reversed", "negative_t_min", "t_max_above_1"],
+    )
+    def test_invalid_time_range(self, t_min, t_max):
+        with pytest.raises(ValueError, match="t_min and t_max"):
+            RectifiedFlowNoiseScheduler(t_min=t_min, t_max=t_max)
+
+    def test_warns_at_t_max_one(self):
+        """Explicit t_max=1.0 warns: sampling is singular at t=1."""
+        with pytest.warns(UserWarning, match="t_max"):
+            RectifiedFlowNoiseScheduler(t_max=1.0)
+
+    def test_no_warning_by_default(self):
+        """The default t_max=0.99 is sampling-safe and must not warn."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            RectifiedFlowNoiseScheduler()
 
 
 # =============================================================================
@@ -251,96 +296,102 @@ class TestLinearGaussianNoiseScheduler:
         xN = s.init_latents((3, 8, 8), tN, device=device)
         assert xN.shape == (2, 3, 8, 8)
 
-    def test_concrete_get_denoiser(self, device):
+    @pytest.mark.parametrize(
+        "predictor_type",
+        ["x0", "score", "epsilon", "flow"],
+        ids=["x0", "score", "epsilon", "flow"],
+    )
+    def test_concrete_get_denoiser(self, device, predictor_type):
+        """All predictor types yield the same ODE RHS as the x0-predictor."""
         s = _MinimalScheduler()
-
-        def pred(x, t):
-            return x * 0.9
-
-        denoiser = s.get_denoiser(x0_predictor=pred, denoising_type="ode")
-        x = make_input((2, 3, 8, 8), seed=4, device=device)
-        t = torch.tensor([1.0, 1.0], device=device)
-        out = denoiser(x, t)
-        assert out.shape == x.shape
-
-    def test_concrete_x0_to_score_to_x0(self, device):
-        s = _MinimalScheduler()
-        x0 = make_input((2, 4), seed=5, device=device)
-        x_t = make_input((2, 4), seed=6, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
-        score = s.x0_to_score(x0, x_t, t)
-        x0_back = s.score_to_x0(score, x_t, t)
-        assert torch.allclose(x0, x0_back, atol=1e-5)
-
-    def test_concrete_x0_to_flow_to_x0(self, device):
-        s = _MinimalScheduler()
-        x0 = make_input((2, 4), seed=15, device=device)
-        x_t = make_input((2, 4), seed=16, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
-        v = s.x0_to_flow(x0, x_t, t)
-        x0_back = s.flow_to_x0(v, x_t, t)
-        assert torch.allclose(x0, x0_back, atol=1e-5)
-
-    def test_concrete_flow_to_x0_to_flow(self, device):
-        s = _MinimalScheduler()
-        v = make_input((2, 4), seed=17, device=device)
-        x_t = make_input((2, 4), seed=18, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
-        x0 = s.flow_to_x0(v, x_t, t)
-        v_back = s.x0_to_flow(x0, x_t, t)
-        assert torch.allclose(v, v_back, atol=1e-5)
-
-    def test_concrete_score_to_flow_to_score(self, device):
-        s = _MinimalScheduler()
-        score = make_input((2, 4), seed=25, device=device)
-        x_t = make_input((2, 4), seed=26, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
-        v = s.score_to_flow(score, x_t, t)
-        score_back = s.flow_to_score(v, x_t, t)
-        assert torch.allclose(score, score_back, atol=1e-5)
-
-    def test_score_to_flow_matches_x0_composition(self, device):
-        """score_to_flow equals the score_to_x0 -> x0_to_flow composition."""
-        s = _MinimalScheduler()
-        score = make_input((2, 4), seed=27, device=device)
-        x_t = make_input((2, 4), seed=28, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
-        direct = s.score_to_flow(score, x_t, t)
-        composed = s.x0_to_flow(s.score_to_x0(score, x_t, t), x_t, t)
-        torch.testing.assert_close(direct, composed)
-
-    def test_flow_to_score_matches_x0_composition(self, device):
-        """flow_to_score equals the flow_to_x0 -> x0_to_score composition."""
-        s = _MinimalScheduler()
-        v = make_input((2, 4), seed=29, device=device)
-        x_t = make_input((2, 4), seed=30, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
-        direct = s.flow_to_score(v, x_t, t)
-        composed = s.x0_to_score(s.flow_to_x0(v, x_t, t), x_t, t)
-        torch.testing.assert_close(direct, composed)
-
-    def test_get_denoiser_with_flow_predictor(self, device):
-        """flow_predictor produces the same RHS as a matching x0_predictor."""
-        s = _MinimalScheduler()
-        x = make_input((2, 4), seed=19, device=device)
-        t = torch.tensor([0.5, 0.5], device=device)
 
         def x0_pred(x, t):
             return x * 0.9
 
-        def flow_pred(x, t):
-            x0 = x0_pred(x, t)
-            return s.x0_to_flow(x0, x, t)
+        converters = {
+            "x0": lambda x, t: x0_pred(x, t),
+            "score": lambda x, t: s.x0_to_score(x0_pred(x, t), x, t),
+            "epsilon": lambda x, t: s.x0_to_epsilon(x0_pred(x, t), x, t),
+            "flow": lambda x, t: s.x0_to_flow(x0_pred(x, t), x, t),
+        }
+        denoiser = s.get_denoiser(
+            **{f"{predictor_type}_predictor": converters[predictor_type]},
+            denoising_type="ode",
+        )
+        x = make_input((2, 3, 8, 8), seed=4, device=device)
+        t = torch.tensor([1.0, 1.0], device=device)
+        out = denoiser(x, t)
+        assert out.shape == x.shape
+        ref = s.get_denoiser(x0_predictor=x0_pred, denoising_type="ode")(x, t)
+        torch.testing.assert_close(out, ref)
 
-        denoiser_x0 = s.get_denoiser(x0_predictor=x0_pred)
-        denoiser_v = s.get_denoiser(flow_predictor=flow_pred)
-        torch.testing.assert_close(denoiser_x0(x, t), denoiser_v(x, t))
-
-    def test_get_denoiser_validates_flow_predictor(self, device):
+    @pytest.mark.parametrize(
+        "predictor_type",
+        ["x0", "score", "epsilon", "flow"],
+        ids=["x0", "score", "epsilon", "flow"],
+    )
+    def test_get_denoiser_validates_predictor_count(self, device, predictor_type):
+        """get_denoiser rejects zero predictors and any pair of predictors."""
         s = _MinimalScheduler()
         pred = lambda x, t: x  # noqa: E731
         with pytest.raises(ValueError, match="Exactly one"):
-            s.get_denoiser(x0_predictor=pred, flow_predictor=pred)
+            s.get_denoiser()
+        other = "score" if predictor_type == "x0" else "x0"
+        with pytest.raises(ValueError, match="Exactly one"):
+            s.get_denoiser(
+                **{
+                    f"{predictor_type}_predictor": pred,
+                    f"{other}_predictor": pred,
+                }
+            )
+
+    @pytest.mark.parametrize(
+        "source,target",
+        [
+            ("x0", "score"),
+            ("x0", "epsilon"),
+            ("x0", "flow"),
+            ("flow", "x0"),
+            ("score", "flow"),
+            ("flow", "score"),
+        ],
+        ids=[
+            "x0-score",
+            "x0-epsilon",
+            "x0-flow",
+            "flow-x0",
+            "score-flow",
+            "flow-score",
+        ],
+    )
+    def test_conversion_roundtrip(self, device, source, target):
+        """source -> target -> source recovers the original prediction."""
+        s = _MinimalScheduler()
+        prediction = make_input((2, 4), seed=15, device=device)
+        x_t = make_input((2, 4), seed=16, device=device)
+        t = torch.tensor([0.5, 0.5], device=device)
+        forward = getattr(s, f"{source}_to_{target}")
+        inverse = getattr(s, f"{target}_to_{source}")
+        roundtrip = inverse(forward(prediction, x_t, t), x_t, t)
+        assert torch.allclose(prediction, roundtrip, atol=1e-5)
+
+    @pytest.mark.parametrize(
+        "direct,inner,outer",
+        [
+            ("score_to_flow", "score_to_x0", "x0_to_flow"),
+            ("flow_to_score", "flow_to_x0", "x0_to_score"),
+        ],
+        ids=["score_to_flow", "flow_to_score"],
+    )
+    def test_flow_conversion_matches_x0_composition(self, device, direct, inner, outer):
+        """The direct flow conversions equal their x0-composition forms."""
+        s = _MinimalScheduler()
+        prediction = make_input((2, 4), seed=27, device=device)
+        x_t = make_input((2, 4), seed=28, device=device)
+        t = torch.tensor([0.5, 0.5], device=device)
+        got = getattr(s, direct)(prediction, x_t, t)
+        composed = getattr(s, outer)(getattr(s, inner)(prediction, x_t, t), x_t, t)
+        torch.testing.assert_close(got, composed)
 
     def test_custom_drift_override(self, device):
         """Overriding drift() changes get_denoiser behavior."""
@@ -865,6 +916,7 @@ COMPILE_SCHEDULER_CONFIGS = [
     (EDMNoiseScheduler, {}, "edm"),
     (VPNoiseScheduler, {}, "vp"),
     (VENoiseScheduler, {}, "ve"),
+    (RectifiedFlowNoiseScheduler, {}, "rf"),
 ]
 
 
