@@ -20,8 +20,8 @@ version, with the :ref:`noise scheduler <diffusion_noise_schedulers>` handling
 time sampling, noise injection, and loss weighting.
 
 :class:`~physicsnemo.diffusion.metrics.losses.MSEDSMLoss` implements the
-MSE-based DSM loss and supports both x0-predictor and score-predictor
-training. :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` 
+MSE-based DSM loss and supports x0-, score-, epsilon-, and
+flow-predictor training. :class:`~physicsnemo.diffusion.metrics.losses.FlowMatchingLoss` 
 implements the flow matching loss. It regresses a flow-predictor against a
 flow target computed by a user-provided ``x0_to_flow_fn``, typically the
 scheduler's ``x0_to_flow`` conversion. Callbacks also convert x0-, epsilon-,
@@ -29,8 +29,9 @@ or score-predictors to flow estimates.
 
 :class:`~physicsnemo.diffusion.metrics.losses.WeightedFlowMatchingLoss`
 and :class:`~physicsnemo.diffusion.metrics.losses.WeightedMSEDSMLoss`
-extends it with an element-wise weight tensor for masking specific spatial
-regions or channels (for example, land versus ocean in weather applications).
+extend their unweighted counterparts with an element-wise weight tensor for
+masking specific spatial regions or channels (for example, land versus ocean
+in weather applications).
 
 .. code-block:: python
 

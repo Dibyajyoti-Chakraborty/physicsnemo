@@ -119,11 +119,12 @@ class MSEDSMLoss:
     - **Loss weighting** via :meth:`~physicsnemo.diffusion.noise_schedulers.NoiseScheduler.loss_weight`: returns
       the per-sample weight :math:`w(t)`.
 
-    The model can be trained to either directly predict the clean data
-    :math:`\hat{\mathbf{x}}_0` (``prediction_type="x0"``, default) or to
-    predict the score, which is then converted to an
-    :math:`\hat{\mathbf{x}}_0` estimate via a user-provided
-    ``score_to_x0_fn`` callback (``prediction_type="score"``).
+    The model can directly predict the clean data
+    :math:`\hat{\mathbf{x}}_0` (``prediction_type="x0"``, default), or
+    predict the score, noise, or flow (``prediction_type="score"``,
+    ``"epsilon"``, or ``"flow"``); the matching user-provided
+    ``*_to_x0_fn`` callback then converts the prediction to an
+    :math:`\hat{\mathbf{x}}_0` estimate.
 
     .. warning::
 
@@ -218,6 +219,8 @@ class MSEDSMLoss:
         If ``prediction_type="score"`` and ``score_to_x0_fn`` is ``None``.
     ValueError
         If ``prediction_type="epsilon"`` and ``epsilon_to_x0_fn`` is ``None``.
+    ValueError
+        If ``prediction_type="flow"`` and ``flow_to_x0_fn`` is ``None``.
 
     Examples
     --------
@@ -695,7 +698,7 @@ class FlowMatchingLoss:
         \left[ w(t) \left\| \hat{\mathbf{v}}(\mathbf{x}_t, t)
         - \mathbf{v}(\mathbf{x}_0, \mathbf{x}_t, t) \right\|^2 \right]
 
-    With the default pairing of a
+    When paired with a
     :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`
     and its ``x0_to_flow`` method as the callback, the target is the
     standard rectified-flow form
@@ -707,9 +710,10 @@ class FlowMatchingLoss:
 
     .. note::
 
-        For the rectified-flow schedule, the x0-to-flow conversion is
-        singular at :math:`t = 0` and the epsilon/score conversions at
-        :math:`t = 1`; restrict sampled times accordingly (e.g.
+        For the rectified-flow schedule, the x0-to-flow conversion
+        (which also computes the flow target) is singular at
+        :math:`t = 0`, and the epsilon/score conversions at :math:`t = 1`;
+        restrict sampled times accordingly (e.g.
         ``RectifiedFlowNoiseScheduler(t_min=1e-3)`` for x0 prediction).
 
     .. warning::

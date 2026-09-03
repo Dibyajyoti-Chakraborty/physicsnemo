@@ -64,9 +64,9 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
         - g^2(\mathbf{x}, t) \nabla_{\mathbf{x}} \log p(\mathbf{x}) \right] dt
         + g(\mathbf{x}, t) d\mathbf{W}
 
-    The :meth:`get_denoiser` factory converts a predictor (either a
-    score-predictor or an x0-predictor) into the appropriate ODE/SDE
-    right-hand side.
+    The :meth:`get_denoiser` factory converts a predictor (a score-, x0-,
+    epsilon-, or flow-predictor) into the appropriate ODE/SDE right-hand
+    side.
 
     **Abstract methods (must be implemented by subclasses):**
 
@@ -1123,7 +1123,7 @@ class LinearGaussianNoiseScheduler(ABC, NoiseScheduler):
             A score-predictor that takes ``(x_t, t)`` and returns a score
             (e.g. :math:`\nabla_{\mathbf{x}} \log p(\mathbf{x}_t)`). Can be
             unconditional, conditional, guidance-augmented, etc. Mutually
-            exclusive with ``x0_predictor`` and ``epsilon_predictor``.
+            exclusive with the other predictors.
         x0_predictor : Predictor, optional
             An x0-predictor that takes ``(x_t, t)`` and returns an estimate
             of clean data :math:`\hat{\mathbf{x}}_0`. The denoiser computes
