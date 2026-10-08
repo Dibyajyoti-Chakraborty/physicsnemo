@@ -176,6 +176,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- GLOBE DrivAerML postprocessing reports correct Cd, Cl, and Cs on subsampled
+  surfaces. Before, they shrank with the fraction of cells kept.
+- The unified external aero recipe documents how surface subsampling affects
+  force integration.
 - Checkpoint loading resolves model weights at the selected training checkpoint's
   filename index, preventing resumes that mix epochs. Missing required weights
   raise before any model or training state is restored. Distributed loads validate
