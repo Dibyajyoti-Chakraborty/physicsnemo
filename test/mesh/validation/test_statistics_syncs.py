@@ -27,7 +27,10 @@ from physicsnemo.mesh.primitives.planar import structured_grid
 from physicsnemo.mesh.primitives.surfaces import sphere_icosahedral
 from physicsnemo.mesh.primitives.volumes import cube_volume
 from physicsnemo.mesh.validation import compute_mesh_statistics
-from physicsnemo.mesh.validation.quality import compute_quality_metrics
+from physicsnemo.mesh.validation.quality import (
+    compute_cell_edge_lengths,
+    compute_quality_metrics,
+)
 
 
 def _reference_statistics(mesh: Mesh, tolerance: float = 1e-10) -> dict:
@@ -51,14 +54,8 @@ def _reference_statistics(mesh: Mesh, tolerance: float = 1e-10) -> dict:
         )
 
     stats["cell_area_stats"] = summary(areas)
+    stats["edge_length_stats"] = summary(compute_cell_edge_lengths(mesh).flatten())
     quality = compute_quality_metrics(mesh)
-    min_edge, max_edge = quality["min_edge_length"], quality["max_edge_length"]
-    stats["edge_length_stats"] = (
-        min_edge.min().item(),
-        (min_edge.mean().item() + max_edge.mean().item()) / 2.0,
-        max_edge.max().item(),
-        max_edge.std(correction=0).item(),
-    )
     for key in ("aspect_ratio", "quality_score"):
         if key in quality.keys():
             stats[f"{key}_stats"] = summary(quality[key])
@@ -83,10 +80,13 @@ MESHES = {
 
 @pytest.mark.parametrize("name", MESHES)
 @pytest.mark.parametrize("defects", [False, True])
-def test_statistics_match_reference(name, defects, device):
+@pytest.mark.parametrize("cells_dtype", [torch.int64, torch.int32])
+def test_statistics_match_reference(name, defects, cells_dtype, device):
     mesh = MESHES[name](device)
     if defects:
         mesh = _with_defects(mesh)
+    mesh = Mesh(points=mesh.points, cells=mesh.cells.to(cells_dtype))
+    assert mesh.cells.dtype == cells_dtype  # Mesh keeps int32 connectivity
 
     stats = compute_mesh_statistics(mesh)
     expected = _reference_statistics(mesh)
