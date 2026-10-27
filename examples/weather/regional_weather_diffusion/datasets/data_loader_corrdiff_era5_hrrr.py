@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Same-time ERA5 -> HRRR downscaling dataset over the contiguous US."""
+
 import json
 import os
 from typing import Any
@@ -24,11 +26,12 @@ import xarray as xr
 
 from physicsnemo.utils.zenith_angle import cos_zenith_angle
 
-from .dataset import DownscalingDataset
+from .dataset import StormCastDataset
 
 
-class HRRRERA5Dataset(DownscalingDataset):
-    """Same-time ERA5 -> HRRR downscaling samples over the contiguous US.
+class _CorrDiffEra5HrrrDataset(StormCastDataset):
+    """Same-time ERA5 -> HRRR downscaling samples over the contiguous US, the
+    dataset of CorrDiff-ERA5-HRRR (``config/corrdiff_era5_hrrr.yaml``).
 
     Expects the data under ``data_path`` with the following layout:
 
@@ -39,7 +42,9 @@ class HRRRERA5Dataset(DownscalingDataset):
     | -- invariants/invariants_HRRR.nc  # static fields on the HRRR grid
     | -- stats/hrrr_era5_stats.json     # {"hrrr"|"era5"|"invariant": {var: {"mean", "std"}}}
 
-    Each sample is a dictionary with the following normalized arrays:
+    Each sample is a dictionary with the following normalized arrays, the
+    "downscaling" model type of this recipe (``model.diffusion_conditions:
+    ["background"]``):
 
     - ``state``: the HRRR target state, shape ``(C_state, H, W)``
     - ``background``: the ERA5 fields bilinearly interpolated to the HRRR grid,
@@ -47,6 +52,9 @@ class HRRRERA5Dataset(DownscalingDataset):
       shape ``(C_background, H, W)``
     - ``scalar_conditions``: sine and cosine of the time of year followed by
       one presence flag per droppable ERA5 variable, shape ``(C_scalar,)``
+
+    The static fields are part of the background channels, so
+    :meth:`get_invariants` returns ``None``.
 
     Training samples are random patches of shape ``patch_shape`` cropped out of
     the domain, while the position of each validation patch depends only on
@@ -283,6 +291,14 @@ class HRRRERA5Dataset(DownscalingDataset):
     def denormalize_state(self, x: np.ndarray) -> np.ndarray:
         """Convert the state from normalized data to physical units."""
         return x * self.hrrr_std + self.hrrr_mean
+
+
+class CorrDiffEra5HrrrDataset(_CorrDiffEra5HrrrDataset):
+    """The dataset as the training recipe constructs it, from the ``dataset``
+    config (``name: data_loader_corrdiff_era5_hrrr.CorrDiffEra5HrrrDataset``) and a ``train`` flag."""
+
+    def __init__(self, params: dict, train: bool):
+        super().__init__(train=train, **params)
 
 
 def _load_stats(

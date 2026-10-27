@@ -17,9 +17,13 @@
 
 """Loss functions for StormCast training.
 
-Diffusion training uses :class:`~physicsnemo.diffusion.metrics.losses.MSEDSMLoss`
+Diffusion training uses :class:`~physicsnemo.diffusion.metrics.losses.WeightedMSEDSMLoss`
 with an :class:`~physicsnemo.diffusion.noise_schedulers.EDMNoiseScheduler` or
-:class:`~physicsnemo.diffusion.noise_schedulers.EDMLogUniformNoiseScheduler`.
+:class:`~physicsnemo.diffusion.noise_schedulers.EDMLogUniformNoiseScheduler`
+(``training.loss.type: edm``), or
+:class:`~physicsnemo.diffusion.metrics.losses.WeightedFlowMatchingLoss` with a
+:class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`
+(``training.loss.type: flow_matching``).
 When domain parallelism is active, the caller wraps the scheduler with
 :class:`~physicsnemo.diffusion.DomainParallelNoiseScheduler` (via
 :meth:`~utils.parallel.ParallelHelper.make_domain_parallel_scheduler`) before
@@ -28,26 +32,36 @@ shards.
 """
 
 from collections.abc import Sequence
+import warnings
 
 import numpy as np
 import torch
 
+from physicsnemo.diffusion.metrics.losses import (
+    WeightedFlowMatchingLoss,
+    WeightedMSEDSMLoss,
+)
+from utils.nn import flow_conversions
+
 from physicsnemo.diffusion.noise_schedulers import (
     EDMLogUniformNoiseScheduler,
     EDMNoiseScheduler,
+    NoiseScheduler,
+    RectifiedFlowNoiseScheduler,
 )
 
 
 def build_noise_scheduler(
     loss_cfg,
     logger=None,
-) -> EDMNoiseScheduler:
-    """Create an :class:`~physicsnemo.diffusion.noise_schedulers.EDMNoiseScheduler` from Hydra loss config.
+) -> NoiseScheduler:
+    """Create the training noise scheduler from the Hydra loss config.
 
     Parameters
     ----------
     loss_cfg : object
-        Loss config with ``sigma_distribution``, ``sigma_data``, and
+        Loss config. With ``type: "flow_matching"`` it must provide ``t_min``
+        and ``t_max``; otherwise ``sigma_distribution``, ``sigma_data``, and
         distribution-specific params (``P_mean``/``P_std`` or
         ``sigma_min``/``sigma_max``).
     logger : optional
@@ -55,8 +69,13 @@ def build_noise_scheduler(
 
     Returns
     -------
-    EDMNoiseScheduler
+    NoiseScheduler
+        A :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`
+        for flow matching, otherwise an EDM scheduler.
     """
+    if loss_cfg.type == "flow_matching":
+        return build_rectified_flow_scheduler(loss_cfg.t_min, loss_cfg.t_max)
+
     sigma_data = loss_cfg.sigma_data
     if isinstance(sigma_data, Sequence):
         sigma_data = list(sigma_data)
@@ -84,6 +103,88 @@ def build_noise_scheduler(
         raise ValueError(
             "training.loss.sigma_distribution must be 'lognormal' or 'loguniform'"
         )
+
+
+def build_rectified_flow_scheduler(
+    t_min: float = 0.0, t_max: float = 1.0
+) -> RectifiedFlowNoiseScheduler:
+    """Create a :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`.
+
+    Note: The scheduler warns that the reverse-process drift is singular at
+    ``t_max = 1``. Training up to ``t = 1`` (pure noise) is safe here: the
+    x-prediction loss and the flow used for sampling stay finite at ``t = 1``,
+    and sampling then starts from the same pure-noise inputs as in training.
+
+    Parameters
+    ----------
+    t_min : float
+        Lowest time of the training distribution (0 = clean data).
+    t_max : float
+        Highest time of the training distribution and start of the sampling
+        (1 = pure noise).
+
+    Returns
+    -------
+    RectifiedFlowNoiseScheduler
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="^RectifiedFlowNoiseScheduler was constructed with t_max=1.0",
+        )
+        return RectifiedFlowNoiseScheduler(t_min=t_min, t_max=t_max)
+
+
+def build_diffusion_loss(
+    model: torch.nn.Module, noise_scheduler: NoiseScheduler, loss_cfg
+) -> WeightedMSEDSMLoss | WeightedFlowMatchingLoss:
+    """Create the diffusion training loss for the configured loss type.
+
+    Both losses share the call signature
+    ``loss_fn(x0, weight, t=..., condition=..., **model_kwargs)`` and return
+    the per-element weighted loss. ``loss_cfg.prediction_type`` tells the loss
+    what the network outputs (``x0``, ``epsilon``, ``score``, or ``flow``);
+    the network wrapper (``model.preconditioner``) must produce that quantity.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        The wrapped network, see :func:`~utils.nn.wrap_diffusion_network`.
+    noise_scheduler : NoiseScheduler
+        Training scheduler from :func:`build_noise_scheduler`, possibly
+        wrapped for domain parallelism.
+    loss_cfg : object
+        Loss config with ``type`` and ``prediction_type``.
+
+    Returns
+    -------
+    WeightedMSEDSMLoss | WeightedFlowMatchingLoss
+    """
+    prediction_type = loss_cfg.prediction_type
+    if loss_cfg.type == "edm":
+        return WeightedMSEDSMLoss(
+            model, noise_scheduler, prediction_type=prediction_type, reduction="none"
+        )
+    if loss_cfg.type != "flow_matching":
+        raise ValueError("training.loss.type must be 'edm' or 'flow_matching'")
+
+    # The loss converts the prediction and the target to the flow with the
+    # scheduler, except for x-prediction, which compares the predicted and true
+    # clean states directly: ||x0_hat - x0||^2 (the scheduler's x0_to_flow would
+    # weight the error by 1 / t^2)
+    to_flow = flow_conversions(noise_scheduler)
+    conversions = {"x0_to_flow_fn": to_flow["x0"]}
+    if prediction_type == "x0":
+        conversions["x0_to_flow_fn"] = lambda x0, x_t, t: x0
+    elif prediction_type in ("score", "epsilon"):
+        conversions[f"{prediction_type}_to_flow_fn"] = to_flow[prediction_type]
+    return WeightedFlowMatchingLoss(
+        model,
+        noise_scheduler,
+        prediction_type=prediction_type,
+        reduction="none",
+        **conversions,
+    )
 
 
 class RegressionLoss:
@@ -148,7 +249,10 @@ class SigmaBinTracker:
     device : torch.device
         Device for accumulator tensors.
     loss_type : str
-        ``"regression"`` or ``"edm"``.  Tracking is disabled for regression.
+        ``"regression"``, ``"edm"``, or ``"flow_matching"``.  Tracking is
+        disabled for regression. For flow matching the bins divide the
+        uniform time distribution on ``[t_min, t_max]`` instead of the sigma
+        distribution.
     """
 
     def __init__(self, loss_cfg, device: torch.device, loss_type: str = "edm"):
@@ -162,6 +266,10 @@ class SigmaBinTracker:
 
         if len(loss_cfg.sigma_bin_edges) >= 2:
             edges = np.asarray(loss_cfg.sigma_bin_edges, dtype=np.float64)
+        elif loss_type == "flow_matching":
+            edges = np.linspace(
+                loss_cfg.t_min, loss_cfg.t_max, int(loss_cfg.sigma_bin_count) + 1
+            )
         else:
             n_edges = int(loss_cfg.sigma_bin_count) + 1
             if loss_cfg.sigma_distribution == "loguniform":

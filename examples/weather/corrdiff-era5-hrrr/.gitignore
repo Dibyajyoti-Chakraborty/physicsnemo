@@ -1,9 +1,0 @@
-*.mdlus
-*.png
-*.pt
-*.nc
-*.tfevents*
-rundir/
-# example plots for the README
-!outputs/
-!outputs/*.png

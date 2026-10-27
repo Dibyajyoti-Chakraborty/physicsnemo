@@ -13,8 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Defaults
 
-# Tiny model on mock data, used by test_training.py
+# Tiny DiT downscaling model trained with flow matching on mock data, used by
+# test_training.py
 
 # Defaults
 defaults:
@@ -23,7 +25,7 @@ defaults:
   - dataset/mock
 
   # Model
-  - model/dit
+  - model/corrdiff_era5_hrrr
 
   # Training
   - training/default
@@ -39,26 +41,38 @@ defaults:
 training:
   num_data_workers: 1
   validation_plot_variables: ["state_0"]
+  log_to_wandb: True
+  wandb_mode: "offline"  # not using online logging while testing
   log_to_tensorboard: True
 
   print_progress_freq: 5 # How often to print progress, measured in number of training steps
   checkpoint_freq: 5 # How often to save the checkpoints, measured in number of training steps
-  validation_freq: 5 # How often to record the validation loss, measured in number of training steps
-  validation_steps: 2
-  batch_size: 2
-  batch_size_per_gpu: 1
+  validation_freq: 5 # how often to record the validation loss, measured in number of training steps
+  batch_size: 1
   total_train_steps: 10
 
+  optimizer:
+    name: "adamw"
+    betas: [0.9, 0.99]
+
   scheduler:
-    lr_rampup_steps: 2
+    name: null
+
+  loss:
+    type: 'flow_matching'
+    prediction_type: 'x0'
 
 sampler:
   args:
     num_steps: 2
 
+dataset:
+  num_samples: 20
+  model_type: downscaling
+
 model:
   hyperparameters:
-    hidden_size: 64
     depth: 2
+    hidden_size: 32
     num_heads: 1
     attn_kernel_size: 7
