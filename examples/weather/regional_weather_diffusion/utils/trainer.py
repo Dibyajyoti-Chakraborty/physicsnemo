@@ -724,9 +724,7 @@ class Trainer:
                 f"prediction and t in [{loss_params.t_min}, {loss_params.t_max}]"
             )
         else:
-            self.logger.info(
-                f"Using diffusion loss: {loss_params.sigma_distribution}"
-            )
+            self.logger.info(f"Using diffusion loss: {loss_params.sigma_distribution}")
 
         noise_scheduler = build_noise_scheduler(
             loss_params,
