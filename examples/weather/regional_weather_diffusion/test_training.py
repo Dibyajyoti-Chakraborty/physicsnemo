@@ -943,8 +943,7 @@ def test_edm_time_scaled_training(
         pytest.skip("Skipping: single-process test.")
     cfg = cfg_diffusion.copy()
     cfg.training.rundir = _setup_rundir(tmp_path, dist.world_size)
-    cfg.model.preconditioner = "time_scaled"
-    cfg.model.time_scale = 1.0  # the EDM noise levels already span a wide range
+    cfg.model.preconditioner = "time_scaled"  # with the default time_scale
     cfg.training.loss.prediction_type = prediction_type
     if "regression" in cfg.model.diffusion_conditions:
         cfg.model.diffusion_conditions.remove("regression")
