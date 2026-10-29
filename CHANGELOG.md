@@ -388,6 +388,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The GLOBE DrivAerML example trains under `torch.compile` again on PyTorch 2.13
+  and 2.14. It and the AirfRANS example now set
+  `torch._dynamo.config.specialize_float`, which avoids a Dynamo crash in GLOBE's
+  Padé networks (pytorch/pytorch#193194).
 - Preserve unreduced ShardTensor placement dimensions in `sum` and `mean`
   when `keepdim=True`, including independently sharded simulation and spatial axes.
 - Multi-node jobs launched with `srun` no longer hang in
