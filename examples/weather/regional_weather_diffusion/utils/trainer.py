@@ -33,14 +33,17 @@ from physicsnemo.diffusion.metrics.losses import (
     WeightedFlowMatchingLoss,
     WeightedMSEDSMLoss,
 )
-from physicsnemo.diffusion.noise_schedulers import EDMNoiseScheduler, NoiseScheduler
+from physicsnemo.diffusion.noise_schedulers import (
+    EDMNoiseScheduler,
+    NoiseScheduler,
+    RectifiedFlowNoiseScheduler,
+)
 
 from utils.loss import (
     RegressionLoss,
     SigmaBinTracker,
     build_diffusion_loss,
     build_noise_scheduler,
-    build_rectified_flow_scheduler,
 )
 
 from utils.config import MainConfig
@@ -739,7 +742,7 @@ class Trainer:
         sa = self.cfg.sampler.args.__dict__
         if self.loss_type == "flow_matching":
             # Sampling starts at the highest training time, pure noise for t_max = 1
-            sampling_scheduler = build_rectified_flow_scheduler(t_max=loss_params.t_max)
+            sampling_scheduler = RectifiedFlowNoiseScheduler(t_max=loss_params.t_max)
         else:
             sampling_scheduler = EDMNoiseScheduler(
                 sigma_min=sa.get("sigma_min", 0.002),

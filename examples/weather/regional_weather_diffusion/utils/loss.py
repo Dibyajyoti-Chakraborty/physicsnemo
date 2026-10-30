@@ -32,17 +32,15 @@ shards.
 """
 
 from collections.abc import Sequence
-import warnings
 
 import numpy as np
 import torch
+from utils.nn import flow_conversions
 
 from physicsnemo.diffusion.metrics.losses import (
     WeightedFlowMatchingLoss,
     WeightedMSEDSMLoss,
 )
-from utils.nn import flow_conversions
-
 from physicsnemo.diffusion.noise_schedulers import (
     EDMLogUniformNoiseScheduler,
     EDMNoiseScheduler,
@@ -74,7 +72,7 @@ def build_noise_scheduler(
         for flow matching, otherwise an EDM scheduler.
     """
     if loss_cfg.type == "flow_matching":
-        return build_rectified_flow_scheduler(loss_cfg.t_min, loss_cfg.t_max)
+        return RectifiedFlowNoiseScheduler(t_min=loss_cfg.t_min, t_max=loss_cfg.t_max)
 
     sigma_data = loss_cfg.sigma_data
     if isinstance(sigma_data, Sequence):
@@ -105,36 +103,6 @@ def build_noise_scheduler(
         )
 
 
-def build_rectified_flow_scheduler(
-    t_min: float = 0.0, t_max: float = 1.0
-) -> RectifiedFlowNoiseScheduler:
-    """Create a :class:`~physicsnemo.diffusion.noise_schedulers.RectifiedFlowNoiseScheduler`.
-
-    Note: The scheduler warns that the reverse-process drift is singular at
-    ``t_max = 1``. Training up to ``t = 1`` (pure noise) is safe here: the
-    x-prediction loss and the flow used for sampling stay finite at ``t = 1``,
-    and sampling then starts from the same pure-noise inputs as in training.
-
-    Parameters
-    ----------
-    t_min : float
-        Lowest time of the training distribution (0 = clean data).
-    t_max : float
-        Highest time of the training distribution and start of the sampling
-        (1 = pure noise).
-
-    Returns
-    -------
-    RectifiedFlowNoiseScheduler
-    """
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="^RectifiedFlowNoiseScheduler was constructed with t_max=1.0",
-        )
-        return RectifiedFlowNoiseScheduler(t_min=t_min, t_max=t_max)
-
-
 def build_diffusion_loss(
     model: torch.nn.Module, noise_scheduler: NoiseScheduler, loss_cfg
 ) -> WeightedMSEDSMLoss | WeightedFlowMatchingLoss:
@@ -162,8 +130,22 @@ def build_diffusion_loss(
     """
     prediction_type = loss_cfg.prediction_type
     if loss_cfg.type == "edm":
+        # Predictions other than x0 reach the loss through the scheduler's
+        # conversion to x0 (score_to_x0, epsilon_to_x0, flow_to_x0). The
+        # domain-parallel wrapper only implements the sampling and loss
+        # methods; the element-wise conversions come from the wrapped scheduler
+        to_x0 = {}
+        if prediction_type != "x0":
+            converter = getattr(noise_scheduler, "inner_scheduler", noise_scheduler)
+            to_x0[f"{prediction_type}_to_x0_fn"] = getattr(
+                converter, f"{prediction_type}_to_x0"
+            )
         return WeightedMSEDSMLoss(
-            model, noise_scheduler, prediction_type=prediction_type, reduction="none"
+            model,
+            noise_scheduler,
+            prediction_type=prediction_type,
+            reduction="none",
+            **to_x0,
         )
     if loss_cfg.type != "flow_matching":
         raise ValueError("training.loss.type must be 'edm' or 'flow_matching'")

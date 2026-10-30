@@ -215,21 +215,14 @@ Three independent settings define a diffusion model in this recipe:
   [`utils/nn.py`](./utils/nn.py)), so the network output is the prediction itself. The preconditioner
   can be combined with either loss type; the EDM preconditioner requires `prediction_type: x0`.
 
-Rectified flow matching connects the data to Gaussian noise along straight lines,
-
-$$\mathbf{x}_t = (1 - t)\, \mathbf{x}_0 + t\, \boldsymbol{\epsilon}, \qquad \boldsymbol{\epsilon} \sim \mathcal{N}(0, \mathbf{I}), \qquad t \in [0, 1],$$
-
-where $t = 0$ is clean data and $t = 1$ is pure noise, with $t$ drawn uniformly from
-`[training.loss.t_min, training.loss.t_max]`. With `prediction_type: x0`, the network predicts the
-clean state, an approach known as [x-prediction](https://arxiv.org/abs/2511.13720), and the loss is
-$\| D_\theta(\mathbf{x}_t, t, \mathbf{c}) - \mathbf{x}_0 \|^2$. Sampling (`sampler/rectified_flow`:
-`num_steps`, `solver` as `heun` or `euler`, and `time_shift`) integrates the probability-flow ODE
-$d\mathbf{x}/dt = (\mathbf{x}_t - \hat{\mathbf{x}}_0) / t$ from pure noise at $t = 1$ to $t = 0$. Both
-the loss and the ODE stay finite at $t = 1$, so the model trains up to $t = 1$ and sampling starts from
-the same pure-noise inputs as in training.
-
-All components come from `physicsnemo.diffusion`; see [`utils/loss.py`](./utils/loss.py) and the
-`diffusion_model_forward` function in [`utils/nn.py`](./utils/nn.py).
+With `flow_matching`, the training times are drawn uniformly from
+`[training.loss.t_min, training.loss.t_max]`, where $t = 0$ is clean data and $t = 1$ is pure noise;
+the default `t_max: 1` trains up to pure noise, so sampling starts from the same inputs as training.
+With `prediction_type: x0` the network predicts the clean state
+([x-prediction](https://arxiv.org/abs/2511.13720)) and the loss is the plain MSE on it. The sampler
+is set in `sampler/rectified_flow` (`num_steps`, `solver` as `heun` or `euler`, and `time_shift`).
+All components come from `physicsnemo.diffusion`; see [`utils/loss.py`](./utils/loss.py) and
+`diffusion_model_forward` in [`utils/nn.py`](./utils/nn.py).
 
 The top-level config `corrdiff_era5_hrrr.yaml` trains CorrDiff-ERA5-HRRR with this formulation. It
 combines the dataset `dataset/corrdiff_era5_hrrr`, the model `model/corrdiff_era5_hrrr` (the DiT below with
@@ -286,7 +279,8 @@ has the following ensemble-mean RMSE and spread against HRRR for 8 members on 20
 | `refc` | 4.70 dBZ | 4.30 dBZ |
 
 To test the formulation without data, use `--config-name test_flow_matching` (DiT on mock data), or run
-the `test_flow_matching*` and `test_rectified_flow*` tests of `test_training.py`.
+the `test_flow_matching*` and `test_rectified_flow*` tests of `test_training.py`. The training tests also
+run with 2 and 4 processes (data and domain parallelism), see [Testing](#testing).
 
 ### Distributed Training
 

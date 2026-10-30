@@ -32,9 +32,6 @@ from physicsnemo.diffusion.noise_schedulers import NoiseScheduler
 
 import utils.apex  # do not remove, enables Apex LayerNorm with ShardTensor
 
-Preconditioner = Literal["edm", "time_scaled"]
-Formulation = Literal["edm", "flow"]
-
 
 class TimeScaledModel(Module):
     r"""Scale flow-matching times before passing them to the backbone.
@@ -100,7 +97,9 @@ class TimeScaledModel(Module):
 
 
 def wrap_diffusion_network(
-    net: torch.nn.Module, preconditioner: Preconditioner, time_scale: float = 999.0
+    net: torch.nn.Module,
+    preconditioner: Literal["edm", "time_scaled"],
+    time_scale: float = 999.0,
 ) -> EDMPreconditioner | TimeScaledModel:
     """Wrap a network with the configured preconditioner (``model.preconditioner``).
 
@@ -132,7 +131,7 @@ def get_preconditioned_unet(
     lead_time_channels: int = 4,
     amp_mode: bool = False,
     use_apex_gn: bool = False,
-    preconditioner: Preconditioner = "edm",
+    preconditioner: Literal["edm", "time_scaled"] = "edm",
     time_scale: float = 999.0,
     **model_kwargs,
 ) -> EDMPreconditioner | TimeScaledModel | StormCastUNet:
@@ -209,7 +208,7 @@ def get_preconditioned_natten_dit(
     layernorm_backend: Literal["torch", "apex"] = "torch",
     conditioning_embedder: Literal["dit", "edm", "zero"] = "dit",
     attn_kwargs: dict[str, Any] = {},
-    preconditioner: Preconditioner = "edm",
+    preconditioner: Literal["edm", "time_scaled"] = "edm",
     time_scale: float = 999.0,
     **model_kwargs,
 ) -> EDMPreconditioner | TimeScaledModel:
@@ -322,9 +321,11 @@ def build_network_condition_and_target(
 
     if scalar_conditions is not None:
         condition = TensorDict(
-            {"cond_concat": condition, "cond_vec": scalar_conditions}
-            if condition is not None
-            else {"cond_vec": scalar_conditions},
+            (
+                {"cond_concat": condition, "cond_vec": scalar_conditions}
+                if condition is not None
+                else {"cond_vec": scalar_conditions}
+            ),
             device=target.device,
         ).to(dtype=target.dtype)
 
@@ -373,6 +374,9 @@ def unpack_batch(
 def flow_conversions(scheduler: NoiseScheduler) -> dict[str, Any]:
     """Scheduler functions ``f(prediction, x_t, t)`` that convert each
     prediction type to the flow (velocity) of the rectified-flow ODE."""
+    # The domain-parallel wrapper only implements the sampling and loss
+    # methods; the element-wise conversions come from the wrapped scheduler
+    scheduler = getattr(scheduler, "inner_scheduler", scheduler)
     return {
         "x0": scheduler.x0_to_flow,
         "score": scheduler.score_to_flow,
@@ -393,7 +397,7 @@ def diffusion_model_forward(
     lead_time_label: torch.Tensor | None = None,
     sampler_args: dict[str, Any] = {},
     invalid_mask: torch.Tensor | None = None,
-    formulation: Formulation = "edm",
+    formulation: Literal["edm", "flow"] = "edm",
     prediction_type: Literal["x0", "epsilon", "score", "flow"] = "x0",
 ) -> torch.Tensor:
     """Run diffusion model sampling using the ``physicsnemo.diffusion`` API.

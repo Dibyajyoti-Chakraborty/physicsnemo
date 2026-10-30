@@ -7,6 +7,3 @@ xarray
 wandb
 dask
 natten
-zarr
-netCDF4
-pandas

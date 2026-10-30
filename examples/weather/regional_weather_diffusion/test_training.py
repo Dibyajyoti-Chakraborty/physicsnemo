@@ -14,12 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
-
-import json
 
 import numpy as np
 import pandas as pd
@@ -29,16 +28,16 @@ import train
 import xarray as xr
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
+from tensordict import TensorDict
 from torch.distributed.checkpoint.state_dict import StateDictOptions, get_state_dict
 from torch.distributed.tensor import DTensor
 from utils import parallel, trainer
-from utils.loss import build_rectified_flow_scheduler
 from utils.nn import TimeScaledModel, diffusion_model_forward
 
 from physicsnemo.core import Module
 from physicsnemo.diffusion.metrics.losses import MSEDSMLoss
+from physicsnemo.diffusion.noise_schedulers import RectifiedFlowNoiseScheduler
 from physicsnemo.distributed import DistributedManager
-from tensordict import TensorDict
 
 DistributedManager.initialize()
 
@@ -895,26 +894,55 @@ def test_datapipes_backend_training(
 # =============================================================================
 
 
+# Launch configurations (world_size, domain_parallel_size, batch_size): a test
+# runs the cases matching the number of processes pytest was launched with.
+# ``data_parallel`` uses FSDP only, ``domain_parallel`` shards the spatial
+# dimension with ShardTensor, ``data_domain_parallel`` combines both on a
+# (2, 2) mesh.
+_PARALLEL_CONFIGS = pytest.mark.parametrize(
+    "world_size, domain_parallel_size, batch_size",
+    [(1, 1, 1), (2, 1, 2), (2, 2, 1), (4, 2, 2)],
+    ids=["single", "data_parallel", "domain_parallel", "data_domain_parallel"],
+)
+
+
+def _skip_unless_world_size(world_size: int) -> DistributedManager:
+    """Skip the test unless it was launched with ``world_size`` processes."""
+    dist = DistributedManager()
+    if dist.world_size != world_size:
+        pytest.skip(
+            f"Skipping: this configuration requires {world_size} process(es), "
+            f"current: {dist.world_size}."
+        )
+    return dist
+
+
+@_PARALLEL_CONFIGS
 @pytest.mark.parametrize("net_architecture", ["dit", "unet"])
 @pytest.mark.parametrize("prediction_type", ["x0", "epsilon", "flow"])
 @pytest.mark.parametrize("fp_optimizations", ["fp32", "amp-bf16"])
 def test_flow_matching_training(
     tmp_path: Path,
     cfg_flow_matching: DictConfig,
+    *,
+    world_size: int,
+    domain_parallel_size: int,
+    batch_size: int,
     net_architecture: Literal["unet", "dit"],
     prediction_type: Literal["x0", "epsilon", "flow"],
     fp_optimizations: Literal["fp32", "amp-bf16"],
 ):
     """Test that flow matching training runs with the DiT and the U-Net, with
-    x0, epsilon, and flow prediction, and writes the TimeScaledModel
-    checkpoint and validation plots."""
-    dist = DistributedManager()
-    if dist.world_size > 1:
-        pytest.skip("Skipping: single-process test.")
+    x0, epsilon, and flow prediction, on 1, 2 and 4 processes (data and
+    domain parallelism), and writes the TimeScaledModel checkpoint and
+    validation plots."""
+    dist = _skip_unless_world_size(world_size)
     rundir = _setup_rundir(tmp_path, dist.world_size)
 
     cfg = cfg_flow_matching.copy()
     cfg.training.rundir = rundir
+    cfg.training.batch_size = batch_size
+    cfg.training.domain_parallel_size = domain_parallel_size
     cfg.training.perf.fp_optimizations = fp_optimizations
     cfg.training.loss.prediction_type = prediction_type
     cfg.model.architecture = net_architecture
@@ -922,6 +950,8 @@ def test_flow_matching_training(
         cfg.dataset.num_scalar_cond_channels = 0  # scalar conditions need the DiT
         cfg.model.hyperparameters = {"model_channels": 8, "channel_mult": [1, 1]}
     train.main(cfg)
+    if dist.world_size > 1:
+        torch.distributed.barrier()
 
     ckpt_path = os.path.join(
         rundir, "checkpoints_diffusion", "TimeScaledModel.0.10.mdlus"
@@ -931,23 +961,33 @@ def test_flow_matching_training(
     assert os.path.isdir(os.path.join(rundir, "images", "state_0"))
 
 
+@_PARALLEL_CONFIGS
 @pytest.mark.parametrize("prediction_type", ["x0", "epsilon"])
 def test_edm_time_scaled_training(
-    tmp_path: Path, cfg_diffusion: DictConfig, prediction_type: Literal["x0", "epsilon"]
+    tmp_path: Path,
+    cfg_diffusion: DictConfig,
+    *,
+    world_size: int,
+    domain_parallel_size: int,
+    batch_size: int,
+    prediction_type: Literal["x0", "epsilon"],
 ):
     """Test that the time-scaled preconditioner also trains with the EDM loss,
     predicting the clean state or the noise: the preconditioner, the loss type,
-    and the prediction type are independent settings."""
-    dist = DistributedManager()
-    if dist.world_size > 1:
-        pytest.skip("Skipping: single-process test.")
+    and the prediction type are independent settings. Runs on 1, 2 and 4
+    processes (data and domain parallelism)."""
+    dist = _skip_unless_world_size(world_size)
     cfg = cfg_diffusion.copy()
     cfg.training.rundir = _setup_rundir(tmp_path, dist.world_size)
+    cfg.training.batch_size = batch_size
+    cfg.training.domain_parallel_size = domain_parallel_size
     cfg.model.preconditioner = "time_scaled"  # with the default time_scale
     cfg.training.loss.prediction_type = prediction_type
     if "regression" in cfg.model.diffusion_conditions:
         cfg.model.diffusion_conditions.remove("regression")
     train.main(cfg)
+    if dist.world_size > 1:
+        torch.distributed.barrier()
     ckpt_path = os.path.join(
         cfg.training.rundir, "checkpoints_diffusion", "TimeScaledModel.0.10.mdlus"
     )
@@ -1036,7 +1076,7 @@ def test_rectified_flow_sampling_from_pure_noise(
         model,
         torch.zeros(4, 1, 64, 64, device=device),  # the predictor ignores the condition
         shape=(4, 1, 64, 64),
-        scheduler=build_rectified_flow_scheduler(t_max=1.0),
+        scheduler=RectifiedFlowNoiseScheduler(t_max=1.0),
         sampler_args={
             "num_steps": num_steps,
             "solver": solver,
